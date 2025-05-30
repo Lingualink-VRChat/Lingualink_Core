@@ -1,0 +1,65 @@
+server:
+  mode: development
+  port: 8080
+  host: 0.0.0.0
+
+auth:
+  strategies:
+    - type: api_key
+      enabled: true
+      config:
+        keys:
+          dev-key-123:
+            id: dev-user
+            requests_per_minute: 100
+            burst_size: 20
+    - type: anonymous
+      enabled: true
+      config: {}
+
+backends:
+  load_balancer:
+    strategy: round_robin
+  providers:
+    - name: default
+      type: vllm
+      url: ${VLLM_SERVER_URL:http://192.168.8.6:8000}
+      model: ${MODEL_NAME:qwen2.5-32b-instruct}
+      api_key: ${API_KEY:}
+
+prompt:
+  defaults:
+    task: both
+    target_languages: ["英文", "日文", "中文"]
+    template: default
+  template_dir: ./templates
+  languages:
+    - code: zh
+      names:
+        display: "中文"
+        english: "Chinese"
+        native: "中文"
+      aliases: ["chinese", "中文", "汉语", "zh-CN", "zh-TW"]
+    - code: en
+      names:
+        display: "英文"
+        english: "English"
+        native: "English"
+      aliases: ["english", "英文", "英语"]
+    - code: ja
+      names:
+        display: "日文"
+        english: "Japanese"
+        native: "日本語"
+      aliases: ["japanese", "日文", "日语", "日本語"]
+  parsing:
+    separators: [":", "：", "->", "=>"]
+    strict_mode: false
+    validation:
+      required_sections: ["原文"]
+      min_content_length: 1
+      max_content_length: 10000
+
+logging:
+  level: info
+  format: json 
