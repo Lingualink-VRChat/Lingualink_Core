@@ -25,7 +25,7 @@ backends:
       type: vllm
       url: ${VLLM_SERVER_URL:http://192.168.8.6:8000}
       model: ${MODEL_NAME:qwen2.5-32b-instruct}
-      api_key: ${API_KEY:}
+      api_key: ${API_KEY:sk-VkxlIMJf6KLHpI8MN}
 
 prompt:
   defaults:
