@@ -104,12 +104,20 @@ type LoggingConfig struct {
 
 // Load 加载配置
 func Load() (*Config, error) {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-
-	// 配置文件搜索路径
-	viper.AddConfigPath("./config")
-	viper.AddConfigPath(".")
+	// Determine config file: prefer config.local.yaml if present
+	configDir := GetConfigDir()
+	localConfigPath := filepath.Join(configDir, "config.local.yaml")
+	if _, err := os.Stat(localConfigPath); err == nil {
+		// use local override config
+		viper.SetConfigFile(localConfigPath)
+	} else {
+		// use default config.yaml
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
+		// 配置文件搜索路径
+		viper.AddConfigPath(configDir)
+		viper.AddConfigPath(".")
+	}
 
 	// 环境变量设置
 	viper.AutomaticEnv()
