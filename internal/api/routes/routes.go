@@ -1,10 +1,10 @@
 package routes
 
 import (
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/handlers"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/middleware"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
 	"github.com/gin-gonic/gin"
-	"github.com/lingualink/core/internal/api/handlers"
-	"github.com/lingualink/core/internal/api/middleware"
-	"github.com/lingualink/core/pkg/auth"
 )
 
 // RegisterRoutes 注册所有路由

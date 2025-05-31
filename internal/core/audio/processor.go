@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lingualink/core/internal/core/llm"
-	"github.com/lingualink/core/internal/core/prompt"
-	"github.com/lingualink/core/pkg/metrics"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
 

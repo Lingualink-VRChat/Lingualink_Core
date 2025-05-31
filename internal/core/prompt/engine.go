@@ -8,7 +8,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/lingualink/core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )

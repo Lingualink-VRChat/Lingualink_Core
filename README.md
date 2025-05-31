@@ -44,44 +44,95 @@ Lingualink Core 是一个开源的音频处理核心系统，专注于多语言�
 
 1. **克隆项目**
 ```bash
-git clone https://github.com/lingualink/core.git
-cd core
+git clone https://github.com/Lingualink-VRChat/Lingualink_Core.git
+cd Lingualink_Core
 ```
 
-2. **安装依赖**
+2. **快速启动**
 ```bash
-go mod tidy
+# 检查环境
+./start.sh --check
+
+# 启动开发服务器
+./start.sh --dev
+
+# 或者使用开发辅助脚本
+./dev.sh start
 ```
 
 3. **配置环境**
 ```bash
-# 复制配置文件
-cp config/config.yaml config/config.local.yaml
+# 编辑配置文件
+vim config/config.yaml
 
-# 编辑配置文件，设置LLM后端
+# 设置环境变量（可选）
 export VLLM_SERVER_URL=http://localhost:8000/v1
 export MODEL_NAME=qwen2.5-32b-instruct
 export API_KEY=your-api-key
 ```
 
-4. **启动服务**
+4. **测试API**
 ```bash
-go run cmd/server/main.go
-```
+# 快速测试
+./quick_test.sh
 
-5. **测试API**
-```bash
-curl http://localhost:8080/api/v1/health
+# 完整API测试
+./test_api.sh
+
+# 音频处理测试
+./test_audio.sh
 ```
 
 ### Docker 部署
 
 ```bash
-# 启动完整开发环境
+# 使用开发脚本构建和运行
+./dev.sh docker build
+./dev.sh docker run
+
+# 或者使用docker-compose
 docker-compose up -d
 
 # 仅启动 Lingualink Core
 docker-compose up lingualink-core
+```
+
+## 🛠️ 开发工具
+
+### 启动脚本
+
+项目提供了便捷的启动脚本：
+
+```bash
+# 启动脚本
+./start.sh --help          # 查看帮助
+./start.sh --check         # 环境检查
+./start.sh --dev           # 开发模式启动
+./start.sh --build         # 构建后启动
+
+# 开发辅助脚本
+./dev.sh help              # 查看所有命令
+./dev.sh start             # 启动开发服务器
+./dev.sh build             # 构建应用
+./dev.sh test              # 运行测试
+./dev.sh test-api          # API测试
+./dev.sh test-audio        # 音频测试
+./dev.sh clean             # 清理构建文件
+./dev.sh format            # 格式化代码
+./dev.sh lint              # 代码检查
+```
+
+### 测试脚本
+
+```bash
+# 快速功能测试
+./quick_test.sh
+
+# 完整API测试套件
+./test_api.sh
+
+# 音频处理专项测试
+./test_audio.sh
 ```
 
 ## 📚 API 文档

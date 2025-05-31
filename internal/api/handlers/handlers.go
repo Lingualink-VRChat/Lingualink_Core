@@ -4,11 +4,11 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/gin-gonic/gin"
-	"github.com/lingualink/core/internal/core/audio"
-	"github.com/lingualink/core/internal/core/prompt"
-	"github.com/lingualink/core/pkg/auth"
-	"github.com/lingualink/core/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
 

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/golang-jwt/jwt/v4"
-	"github.com/lingualink/core/internal/config"
 	"github.com/sirupsen/logrus"
 )
 

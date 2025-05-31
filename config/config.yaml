@@ -1,8 +1,12 @@
+# Lingualink Core 配置文件
+
+# 服务器配置
 server:
-  mode: development
+  mode: development  # development/production
   port: 8080
   host: 0.0.0.0
 
+# 认证配置
 auth:
   strategies:
     - type: api_key
@@ -12,21 +16,23 @@ auth:
           dev-key-123:
             id: dev-user
             requests_per_minute: 100
-            burst_size: 20
     - type: anonymous
       enabled: true
-      config: {}
+      config:
+        requests_per_minute: 10
 
+# LLM后端配置
 backends:
   load_balancer:
     strategy: round_robin
   providers:
     - name: default
       type: vllm
-      url: ${VLLM_SERVER_URL:http://192.168.8.6:8000}
-      model: ${MODEL_NAME:qwen2.5-32b-instruct}
-      api_key: ${API_KEY:sk-VkxlIMJf6KLHpI8MN}
+      url: http://192.168.8.6:8000/v1
+      model: qwenOmni7
+      api_key: "sk-VkxlIMJf6KLHpI8MN"
 
+# 提示词配置
 prompt:
   defaults:
     task: both
@@ -38,28 +44,46 @@ prompt:
       names:
         display: "中文"
         english: "Chinese"
-        native: "中文"
-      aliases: ["chinese", "中文", "汉语", "zh-CN", "zh-TW"]
+      aliases: ["chinese", "中文", "汉语"]
     - code: en
       names:
-        display: "英文"
-        english: "English"
-        native: "English"
+        display: "English"
+        chinese: "英文"
       aliases: ["english", "英文", "英语"]
     - code: ja
       names:
-        display: "日文"
-        english: "Japanese"
-        native: "日本語"
-      aliases: ["japanese", "日文", "日语", "日本語"]
+        display: "日本語"
+        chinese: "日文"
+      aliases: ["japanese", "日文", "日语"]
+    - code: ko
+      names:
+        display: "한국어"
+        chinese: "韩文"
+      aliases: ["korean", "韩文", "韩语"]
+    - code: es
+      names:
+        display: "Español"
+        chinese: "西班牙语"
+      aliases: ["spanish", "西班牙语"]
+    - code: fr
+      names:
+        display: "Français"
+        chinese: "法语"
+      aliases: ["french", "法语"]
+    - code: de
+      names:
+        display: "Deutsch"
+        chinese: "德语"
+      aliases: ["german", "德语"]
   parsing:
-    separators: [":", "：", "->", "=>"]
+    separators: [":", "：", "-", "—"]
     strict_mode: false
     validation:
-      required_sections: ["原文"]
+      required_sections: []
       min_content_length: 1
       max_content_length: 10000
 
+# 日志配置
 logging:
   level: info
   format: json 

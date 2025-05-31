@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lingualink/core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/sirupsen/logrus"
 )
 
