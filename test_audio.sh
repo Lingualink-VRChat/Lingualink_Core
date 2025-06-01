@@ -131,24 +131,24 @@ echo
 echo "🧪 开始音频处理测试"
 echo "===================="
 
-# 测试1: WAV文件转录
+# 测试1: WAV文件转录+翻译
 if [[ "$wav_exists" == true ]]; then
-    test_audio_processing "$TEST_AUDIO_WAV" "wav" "transcribe" "中文" "WAV文件 - 仅转录"
+    test_audio_processing "$TEST_AUDIO_WAV" "wav" "translate" "中文" "WAV文件 - 转录+翻译"
 fi
 
-# 测试2: OPUS文件转录
+# 测试2: OPUS文件转录+翻译
 if [[ "$opus_exists" == true ]]; then
-    test_audio_processing "$TEST_AUDIO_OPUS" "opus" "transcribe" "中文" "OPUS文件 - 仅转录"
+    test_audio_processing "$TEST_AUDIO_OPUS" "opus" "translate" "中文" "OPUS文件 - 转录+翻译"
 fi
 
-# 测试3: 转录+翻译
+# 测试3: 多语言翻译
 if [[ "$wav_exists" == true ]]; then
-    test_audio_processing "$TEST_AUDIO_WAV" "wav" "both" "英文,日文" "WAV文件 - 转录+翻译"
+    test_audio_processing "$TEST_AUDIO_WAV" "wav" "translate" "english,japanese" "WAV文件 - 多语言翻译"
 fi
 
-# 测试4: 仅翻译（如果有OPUS文件）
+# 测试4: 英文翻译
 if [[ "$opus_exists" == true ]]; then
-    test_audio_processing "$TEST_AUDIO_OPUS" "opus" "translate" "英文" "OPUS文件 - 仅翻译"
+    test_audio_processing "$TEST_AUDIO_OPUS" "opus" "translate" "英文" "OPUS文件 - 英文翻译"
 fi
 
 # JSON方式测试
@@ -164,7 +164,7 @@ if [[ "$wav_exists" == true ]]; then
 {
     "audio": "$audio_base64",
     "audio_format": "wav",
-    "task": "both",
+    "task": "translate",
     "target_languages": ["英文", "日文"],
     "user_prompt": "请准确转录并翻译这段音频内容"
 }

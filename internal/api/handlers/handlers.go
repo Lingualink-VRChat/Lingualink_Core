@@ -78,7 +78,7 @@ func (h *Handler) ProcessAudio(c *gin.Context) {
 	}
 
 	// 获取处理参数
-	task := prompt.TaskType(c.DefaultPostForm("task", "both"))
+	task := prompt.TaskType(c.DefaultPostForm("task", "translate"))
 	sourceLanguage := c.PostForm("source_language")
 
 	// 修复目标语言解析 - 支持逗号分隔的字符串

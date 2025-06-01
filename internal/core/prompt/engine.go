@@ -17,9 +17,10 @@ import (
 type TaskType string
 
 const (
-	TaskTranscribe             TaskType = "transcribe"
-	TaskTranslate              TaskType = "translate"
-	TaskTranscribeAndTranslate TaskType = "both"
+	TaskTranslate TaskType = "translate"
+	// 保留用于后续扩展
+	// TaskTranscribe TaskType = "transcribe"
+	// TaskBoth       TaskType = "both"
 )
 
 // OutputFormat 输出格式
@@ -167,26 +168,20 @@ func (e *Engine) loadDefaultTemplate() error {
 		Version:     "1.0",
 		Description: "默认音频处理模板",
 		SystemPrompt: `你是一个高级的语音处理助手。你的任务是：
-{{- if or (eq .Task "transcribe") (eq .Task "both") }}
 1. 首先将音频内容转录成其原始语言的文本。
-{{- end }}
-{{- if or (eq .Task "translate") (eq .Task "both") }}
 {{- range $index, $lang := .TargetLanguages }}
 {{ add $index 2 }}. 将文本翻译成{{ $lang }}。
 {{- end }}
-{{- end }}
 
 请按照以下格式清晰地组织你的输出：
-{{- if or (eq .Task "transcribe") (eq .Task "both") }}
-原文：
-{{- end }}
+原文:
 {{- range .TargetLanguages }}
-{{ . }}：
+{{ . }}:
 {{- end }}`,
 		UserPrompt: `{{ .UserPrompt | default "请处理下面的音频。" }}`,
 		OutputRules: OutputRules{
 			Format:    FormatStructured,
-			Separator: "：",
+			Separator: ":",
 			Sections: []OutputSection{
 				{
 					Key:      "原文",
