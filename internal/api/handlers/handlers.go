@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
@@ -78,7 +80,27 @@ func (h *Handler) ProcessAudio(c *gin.Context) {
 	// 获取处理参数
 	task := prompt.TaskType(c.DefaultPostForm("task", "both"))
 	sourceLanguage := c.PostForm("source_language")
-	targetLanguages := c.PostFormArray("target_languages")
+
+	// 修复目标语言解析 - 支持逗号分隔的字符串
+	targetLanguagesStr := c.PostForm("target_languages")
+	var targetLanguages []string
+	if targetLanguagesStr != "" {
+		// 检查是否是逗号分隔的字符串
+		if strings.Contains(targetLanguagesStr, ",") {
+			for _, lang := range strings.Split(targetLanguagesStr, ",") {
+				trimmed := strings.TrimSpace(lang)
+				if trimmed != "" {
+					targetLanguages = append(targetLanguages, trimmed)
+				}
+			}
+		} else {
+			targetLanguages = append(targetLanguages, targetLanguagesStr)
+		}
+	} else {
+		// 尝试获取数组形式
+		targetLanguages = c.PostFormArray("target_languages")
+	}
+
 	template := c.PostForm("template")
 	userPrompt := c.PostForm("user_prompt")
 
@@ -211,15 +233,13 @@ func (h *Handler) ProcessAudioJSON(c *gin.Context) {
 		return
 	}
 
-	// TODO: 解码base64音频数据
-	// audioData, err := base64.StdEncoding.DecodeString(req.Audio)
-	// if err != nil {
-	// 	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid audio data"})
-	// 	return
-	// }
-
-	// 现在简单处理，假设是原始字节
-	audioData := []byte(req.Audio)
+	// 解码base64音频数据
+	audioData, err := base64.StdEncoding.DecodeString(req.Audio)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to decode base64 audio data")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid base64 audio data"})
+		return
+	}
 
 	// 构建处理请求
 	processReq := audio.ProcessRequest{

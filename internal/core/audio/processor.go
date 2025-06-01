@@ -36,10 +36,11 @@ type ProcessResponse struct {
 
 // Processor 音频处理器
 type Processor struct {
-	llmManager   *llm.Manager
-	promptEngine *prompt.Engine
-	metrics      metrics.MetricsCollector
-	logger       *logrus.Logger
+	llmManager     *llm.Manager
+	promptEngine   *prompt.Engine
+	audioConverter *AudioConverter
+	metrics        metrics.MetricsCollector
+	logger         *logrus.Logger
 }
 
 // NewProcessor 创建音频处理器
@@ -50,10 +51,11 @@ func NewProcessor(
 	metricsCollector metrics.MetricsCollector,
 ) *Processor {
 	return &Processor{
-		llmManager:   llmManager,
-		promptEngine: promptEngine,
-		metrics:      metricsCollector,
-		logger:       logger,
+		llmManager:     llmManager,
+		promptEngine:   promptEngine,
+		audioConverter: NewAudioConverter(logger),
+		metrics:        metricsCollector,
+		logger:         logger,
 	}
 }
 
@@ -83,13 +85,39 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		return nil, fmt.Errorf("validate request: %w", err)
 	}
 
-	// 2. 标准化目标语言
+	// 2. 验证音频数据
+	if err := p.audioConverter.ValidateAudioData(req.Audio, req.AudioFormat); err != nil {
+		p.logger.WithError(err).Warn("Audio validation failed, proceeding anyway")
+	}
+
+	// 3. 音频格式转换（如果需要）
+	audioData := req.Audio
+	audioFormat := req.AudioFormat
+	if p.audioConverter.IsConversionNeeded(req.AudioFormat) {
+		p.logger.WithField("original_format", req.AudioFormat).Info("Converting audio to WAV format")
+
+		convertedData, err := p.audioConverter.ConvertToWAV(req.Audio, req.AudioFormat)
+		if err != nil {
+			p.logger.WithError(err).Error("Audio conversion failed")
+			// 如果转换失败，尝试使用原始音频
+			p.logger.Warn("Using original audio format due to conversion failure")
+		} else {
+			audioData = convertedData
+			audioFormat = "wav"
+			p.logger.WithFields(logrus.Fields{
+				"original_size":  len(req.Audio),
+				"converted_size": len(convertedData),
+			}).Info("Audio conversion successful")
+		}
+	}
+
+	// 4. 标准化目标语言
 	targetLangs := req.TargetLanguages
 	if len(targetLangs) == 0 {
 		targetLangs = []string{"英文", "日文", "中文"} // 默认目标语言
 	}
 
-	// 3. 构建提示词
+	// 5. 构建提示词
 	promptReq := prompt.PromptRequest{
 		Task:            req.Task,
 		SourceLanguage:  req.SourceLanguage,
@@ -103,12 +131,12 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		return nil, fmt.Errorf("build prompt: %w", err)
 	}
 
-	// 4. 调用LLM
+	// 6. 调用LLM
 	llmReq := &llm.LLMRequest{
 		SystemPrompt: promptObj.System,
 		UserPrompt:   promptObj.User,
-		Audio:        req.Audio,
-		AudioFormat:  req.AudioFormat,
+		Audio:        audioData,
+		AudioFormat:  audioFormat,
 	}
 
 	llmResp, err := p.llmManager.Process(ctx, llmReq)
@@ -119,7 +147,7 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		return nil, fmt.Errorf("llm process: %w", err)
 	}
 
-	// 5. 解析响应
+	// 7. 解析响应
 	parsed, err := p.promptEngine.ParseResponse(llmResp.Content, promptObj.OutputRules)
 	if err != nil {
 		p.logger.WithError(err).Warn("Failed to parse LLM response, using raw response")
@@ -133,17 +161,20 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		}
 	}
 
-	// 6. 构建响应
+	// 8. 构建响应
 	response := &ProcessResponse{
 		RequestID:      requestID,
 		Status:         "success",
 		RawResponse:    llmResp.Content,
 		ProcessingTime: time.Since(startTime).Seconds(),
 		Metadata: map[string]interface{}{
-			"model":         llmResp.Model,
-			"prompt_tokens": llmResp.PromptTokens,
-			"total_tokens":  llmResp.TotalTokens,
-			"backend":       llmResp.Metadata["backend"],
+			"model":              llmResp.Model,
+			"prompt_tokens":      llmResp.PromptTokens,
+			"total_tokens":       llmResp.TotalTokens,
+			"backend":            llmResp.Metadata["backend"],
+			"original_format":    req.AudioFormat,
+			"processed_format":   audioFormat,
+			"conversion_applied": p.audioConverter.IsConversionNeeded(req.AudioFormat),
 		},
 	}
 
@@ -244,7 +275,7 @@ func generateRequestID() string {
 
 // GetSupportedFormats 获取支持的音频格式
 func (p *Processor) GetSupportedFormats() []string {
-	return []string{"wav", "mp3", "m4a", "opus", "flac"}
+	return p.audioConverter.GetSupportedFormats()
 }
 
 // GetCapabilities 获取处理器能力
@@ -254,5 +285,6 @@ func (p *Processor) GetCapabilities() map[string]interface{} {
 		"max_audio_size":      32 * 1024 * 1024, // 32MB
 		"supported_tasks":     []string{"transcribe", "translate", "both"},
 		"supported_languages": []string{"zh", "en", "ja", "ko", "es", "fr", "de"},
+		"audio_conversion":    p.audioConverter.IsFFmpegAvailable(),
 	}
 }

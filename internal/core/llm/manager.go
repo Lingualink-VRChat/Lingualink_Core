@@ -56,49 +56,42 @@ type Manager struct {
 }
 
 // NewManager 创建LLM管理器
-func NewManager(cfg config.BackendsConfig, logger *logrus.Logger) *Manager {
+func NewManager(cfg config.BackendsConfig, logger *logrus.Logger) (*Manager, error) {
 	manager := &Manager{
 		backends: make(map[string]LLMBackend),
 		logger:   logger,
 	}
 
-	// 初始化负载均衡器
+	// 创建负载均衡器
 	manager.loadBalancer = NewLoadBalancer(cfg.LoadBalancer.Strategy, logger)
 
-	// 注册后端
+	// 创建后端实例
 	for _, provider := range cfg.Providers {
-		backend, err := manager.createBackend(provider)
-		if err != nil {
-			logger.Errorf("Failed to create backend %s: %v", provider.Name, err)
-			continue
+		var backend LLMBackend
+		switch provider.Type {
+		case "openai":
+			backend = NewOpenAIBackend(provider, logger)
+		case "vllm":
+			backend = NewVLLMBackend(provider, logger)
+		default:
+			return nil, fmt.Errorf("unsupported backend type: %s", provider.Type)
 		}
 
-		manager.RegisterBackend(backend)
-		logger.Infof("Registered LLM backend: %s", provider.Name)
+		manager.backends[provider.Name] = backend
+		manager.loadBalancer.AddBackend(backend)
+
+		logger.WithFields(logrus.Fields{
+			"backend": provider.Name,
+			"type":    provider.Type,
+			"url":     provider.URL,
+		}).Info("Registered LLM backend")
 	}
 
-	return manager
-}
-
-// createBackend 创建后端实例
-func (m *Manager) createBackend(cfg config.BackendProvider) (LLMBackend, error) {
-	switch cfg.Type {
-	case "openai":
-		return NewOpenAIBackend(cfg, m.logger), nil
-	case "vllm":
-		return NewVLLMBackend(cfg, m.logger), nil
-	default:
-		return nil, fmt.Errorf("unsupported backend type: %s", cfg.Type)
+	if len(manager.backends) == 0 {
+		return nil, fmt.Errorf("no backends configured")
 	}
-}
 
-// RegisterBackend 注册后端
-func (m *Manager) RegisterBackend(backend LLMBackend) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.backends[backend.GetName()] = backend
-	m.loadBalancer.AddBackend(backend)
+	return manager, nil
 }
 
 // Process 处理请求

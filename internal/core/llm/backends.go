@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"encoding/base64"
+
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/sirupsen/logrus"
 )
@@ -171,6 +173,7 @@ func (b *OpenAIBackend) GetName() string {
 type VLLMBackend struct {
 	name    string
 	baseURL string
+	apiKey  string
 	model   string
 	client  *http.Client
 	logger  *logrus.Logger
@@ -181,6 +184,7 @@ func NewVLLMBackend(cfg config.BackendProvider, logger *logrus.Logger) *VLLMBack
 	return &VLLMBackend{
 		name:    cfg.Name,
 		baseURL: cfg.URL,
+		apiKey:  cfg.APIKey,
 		model:   cfg.Model,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
@@ -191,22 +195,58 @@ func NewVLLMBackend(cfg config.BackendProvider, logger *logrus.Logger) *VLLMBack
 
 // Process 处理请求
 func (b *VLLMBackend) Process(ctx context.Context, req *LLMRequest) (*LLMResponse, error) {
-	// 构建VLLM API请求（假设支持OpenAI兼容的API）
-	apiReq := map[string]interface{}{
-		"model": b.model,
-		"messages": []map[string]interface{}{
-			{"role": "system", "content": req.SystemPrompt},
-			{"role": "user", "content": req.UserPrompt},
-		},
-		"temperature": 0.7,
-		"max_tokens":  2048,
+	// 构建VLLM API请求（OpenAI兼容格式）
+	var messages []map[string]interface{}
+
+	// 添加系统消息
+	if req.SystemPrompt != "" {
+		messages = append(messages, map[string]interface{}{
+			"role":    "system",
+			"content": req.SystemPrompt,
+		})
 	}
 
-	// 如果有音频，构建特殊处理
+	// 添加用户消息
 	if len(req.Audio) > 0 {
-		// VLLM可能需要特殊的音频处理
-		b.logger.Warnf("Audio processing for VLLM backend not fully implemented")
-		// 这里可以添加音频预处理逻辑
+		// 构建带音频的用户消息（OpenAI兼容格式）
+		audioBase64 := base64.StdEncoding.EncodeToString(req.Audio)
+
+		userContent := []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": req.UserPrompt,
+			},
+			map[string]interface{}{
+				"type": "input_audio",
+				"input_audio": map[string]interface{}{
+					"data":   audioBase64,
+					"format": req.AudioFormat,
+				},
+			},
+		}
+
+		messages = append(messages, map[string]interface{}{
+			"role":    "user",
+			"content": userContent,
+		})
+
+		b.logger.WithFields(logrus.Fields{
+			"audio_format": req.AudioFormat,
+			"audio_size":   len(req.Audio),
+		}).Info("Sending audio request to VLLM backend")
+	} else {
+		// 纯文本消息
+		messages = append(messages, map[string]interface{}{
+			"role":    "user",
+			"content": req.UserPrompt,
+		})
+	}
+
+	apiReq := map[string]interface{}{
+		"model":       b.model,
+		"messages":    messages,
+		"temperature": 0.0, // 设置为0以获得更确定的结果
+		"max_tokens":  2048,
 	}
 
 	reqBody, err := json.Marshal(apiReq)
@@ -215,12 +255,15 @@ func (b *VLLMBackend) Process(ctx context.Context, req *LLMRequest) (*LLMRespons
 	}
 
 	// 发送HTTP请求
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.baseURL+"/v1/chat/completions", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", b.baseURL+"/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	if b.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+b.apiKey)
+	}
 
 	resp, err := b.client.Do(httpReq)
 	if err != nil {
@@ -234,7 +277,11 @@ func (b *VLLMBackend) Process(ctx context.Context, req *LLMRequest) (*LLMRespons
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error: %s", string(respBody))
+		b.logger.WithFields(logrus.Fields{
+			"status_code": resp.StatusCode,
+			"response":    string(respBody),
+		}).Error("VLLM API error")
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	// 解析响应
@@ -303,11 +350,11 @@ func (b *VLLMBackend) HealthCheck(ctx context.Context) error {
 // GetCapabilities 获取能力
 func (b *VLLMBackend) GetCapabilities() Capabilities {
 	return Capabilities{
-		SupportsAudio:      false, // VLLM通常不直接支持音频
-		SupportedFormats:   []string{},
-		MaxAudioSize:       0,
+		SupportsAudio:      true, // 支持音频处理
+		SupportedFormats:   []string{"wav", "mp3", "opus", "m4a"},
+		MaxAudioSize:       25 * 1024 * 1024, // 25MB
 		SupportsStreaming:  true,
-		SupportedLanguages: []string{"en", "zh", "ja", "ko"},
+		SupportedLanguages: []string{"en", "zh", "ja", "ko", "es", "fr", "de"},
 	}
 }
 
