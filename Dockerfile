@@ -20,8 +20,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o cli cmd/cli/main.
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests and curl for health check
-RUN apk --no-cache add ca-certificates curl
+# Install ca-certificates for HTTPS requests, curl for health check, and ffmpeg for audio conversion
+RUN apk --no-cache add ca-certificates curl ffmpeg
 
 WORKDIR /app
 
