@@ -194,6 +194,11 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 	}
 
 	// 提取翻译（现在keys是短代码）
+	p.logger.WithFields(logrus.Fields{
+		"targetLangCodes": targetLangCodes,
+		"parsedSections":  parsed.Sections,
+	}).Debug("Extracting translations from parsed sections")
+
 	for langCode, translationText := range parsed.Sections {
 		// 验证这是一个我们期望的目标语言代码
 		isTargetLang := false

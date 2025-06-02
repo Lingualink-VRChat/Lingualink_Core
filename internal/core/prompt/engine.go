@@ -337,6 +337,8 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 
 	// 将中文显示名称键转换为短代码
 	finalSections := make(map[string]string)
+	e.logger.WithField("tempParsedSections", tempParsed.Sections).Debug("Original parsed sections before conversion")
+
 	for keyFromLLM, value := range tempParsed.Sections {
 		// 查找匹配的OutputSection规则
 		foundRule := false
@@ -355,6 +357,11 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 				if sectionRule.LanguageCode != "" {
 					// 语言翻译段落，使用短代码作为键
 					finalSections[sectionRule.LanguageCode] = value
+					e.logger.WithFields(logrus.Fields{
+						"llmKey":         keyFromLLM,
+						"finalKey":       sectionRule.LanguageCode,
+						"sectionRuleKey": sectionRule.Key,
+					}).Debug("Converted LLM key to language code")
 				} else {
 					// 非语言段落（如"原文"），保持原键
 					finalSections[sectionRule.Key] = value
@@ -458,13 +465,22 @@ func (p *StructuredParser) matchSection(line string, matchers map[string][]strin
 			key := strings.TrimSpace(line[:idx])
 			value := strings.TrimSpace(line[idx+len(sep):])
 
-			// 尝试匹配已知段落
+			// 尝试匹配已知段落 - 按照精确度排序匹配
+			bestMatch := ""
+			maxMatchScore := 0
+
 			for section, patterns := range matchers {
 				for _, pattern := range patterns {
-					if p.fuzzyMatch(key, pattern) {
-						return section, value, true
+					score := p.getMatchScore(key, pattern)
+					if score > maxMatchScore {
+						maxMatchScore = score
+						bestMatch = section
 					}
 				}
+			}
+
+			if bestMatch != "" {
+				return bestMatch, value, true
 			}
 
 			// 未知段落也保留
@@ -474,25 +490,42 @@ func (p *StructuredParser) matchSection(line string, matchers map[string][]strin
 	return "", "", false
 }
 
-// fuzzyMatch 模糊匹配
-func (p *StructuredParser) fuzzyMatch(input, pattern string) bool {
-	// 1. 精确匹配
+// getMatchScore 获取匹配分数，分数越高表示匹配越精确
+func (p *StructuredParser) getMatchScore(input, pattern string) int {
+	// 1. 精确匹配 - 最高分
 	if strings.EqualFold(input, pattern) {
-		return true
+		return 100
 	}
 
-	// 2. 去除空格和标点
+	// 2. 去除空格和标点后精确匹配
 	cleanInput := regexp.MustCompile(`[\s\p{P}]+`).ReplaceAllString(input, "")
 	cleanPattern := regexp.MustCompile(`[\s\p{P}]+`).ReplaceAllString(pattern, "")
 	if strings.EqualFold(cleanInput, cleanPattern) {
-		return true
+		return 90
 	}
 
-	// 3. 包含匹配
-	if strings.Contains(strings.ToLower(input), strings.ToLower(pattern)) ||
-		strings.Contains(strings.ToLower(pattern), strings.ToLower(input)) {
-		return true
+	// 3. 包含匹配 - 根据长度给分，越长越精确
+	inputLower := strings.ToLower(input)
+	patternLower := strings.ToLower(pattern)
+
+	if inputLower == patternLower {
+		return 80
 	}
 
-	return false
+	if strings.Contains(inputLower, patternLower) {
+		// 输入包含模式，分数基于模式长度占输入长度的比例
+		return 50 + int(float64(len(patternLower))/float64(len(inputLower))*30)
+	}
+
+	if strings.Contains(patternLower, inputLower) {
+		// 模式包含输入，分数基于输入长度占模式长度的比例
+		return 40 + int(float64(len(inputLower))/float64(len(patternLower))*30)
+	}
+
+	return 0 // 不匹配
+}
+
+// fuzzyMatch 模糊匹配 - 保留用于向后兼容，但现在使用getMatchScore
+func (p *StructuredParser) fuzzyMatch(input, pattern string) bool {
+	return p.getMatchScore(input, pattern) > 0
 }

@@ -246,7 +246,7 @@ func (b *VLLMBackend) Process(ctx context.Context, req *LLMRequest) (*LLMRespons
 		"model":       b.model,
 		"messages":    messages,
 		"temperature": 0.0, // 设置为0以获得更确定的结果
-		"max_tokens":  2048,
+		"max_tokens":  100,
 	}
 
 	reqBody, err := json.Marshal(apiReq)
