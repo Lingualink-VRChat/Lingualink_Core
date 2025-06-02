@@ -155,47 +155,6 @@ if [[ "$wav_exists" == true ]]; then
     test_audio_processing "$TEST_AUDIO_WAV" "wav" "translate" "zh-hant" "WAV文件 - 繁体中文翻译"
 fi
 
-# JSON方式测试
-if [[ "$wav_exists" == true ]]; then
-    echo
-    log_info "测试: JSON方式音频处理"
-    
-    # 编码音频文件
-    log_info "正在编码音频文件为base64..."
-    audio_base64=$(base64 -i "$TEST_AUDIO_WAV" | tr -d '\n')
-    
-    json_payload=$(cat <<EOF
-{
-    "audio": "$audio_base64",
-    "audio_format": "wav",
-    "task": "translate",
-    "target_languages": ["en", "ja"]
-}
-EOF
-)
-    
-    response=$(curl -s -w "\nHTTP_CODE:%{http_code}\nTIME:%{time_total}" \
-        -H "X-API-Key: $API_KEY" \
-        -H "Content-Type: application/json" \
-        -d "$json_payload" \
-        "$BASE_URL/api/v1/process/json")
-    
-    http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
-    time_total=$(echo "$response" | grep "TIME:" | cut -d: -f2)
-    response_body=$(echo "$response" | sed '/HTTP_CODE:/d' | sed '/TIME:/d')
-    
-    echo "状态码: $http_code"
-    echo "处理时间: ${time_total}s"
-    
-    if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-        log_success "✅ JSON方式处理成功"
-        echo "$response_body" | jq . 2>/dev/null || echo "$response_body"
-    else
-        log_error "❌ JSON方式处理失败 (HTTP $http_code)"
-        echo "$response_body"
-    fi
-fi
-
 echo
 echo "📊 测试总结"
 echo "==========="
