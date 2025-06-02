@@ -41,8 +41,9 @@ Thumbs.db
 logs/
 
 # Local configuration files (contain sensitive information)
-config/config.local.yaml
-config.local.yaml
+config/config.yaml
+config/api_keys.json
+test_audio_local.sh
 .env
 .env.local
 .env.*.local

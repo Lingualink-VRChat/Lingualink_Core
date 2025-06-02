@@ -4,9 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "8100:8080"
     environment:
-      - LINGUALINK_CONFIG_FILE=config/config.local.yaml
+      - LINGUALINK_CONFIG_FILE=config/config.yaml
+      - LINGUALINK_KEYS_FILE=config/api_keys.json
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs

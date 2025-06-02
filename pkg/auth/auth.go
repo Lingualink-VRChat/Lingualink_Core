@@ -142,96 +142,26 @@ func (ma *MultiAuthenticator) detectAuthType(credentials Credentials) string {
 
 // APIKeyAuthenticator API密钥认证器
 type APIKeyAuthenticator struct {
-	validKeys map[string]*Identity
+	keyStore  *APIKeyStore
 	logger    *logrus.Logger
 }
 
 // NewAPIKeyAuthenticator 创建API密钥认证器
 func NewAPIKeyAuthenticator(config map[string]interface{}, logger *logrus.Logger) *APIKeyAuthenticator {
-	auth := &APIKeyAuthenticator{
-		validKeys: make(map[string]*Identity),
-		logger:    logger,
+	// 创建密钥存储
+	keyStore := NewAPIKeyStore(logger)
+	
+	// 从JSON文件加载密钥
+	keyFilePath := GetKeyFilePath()
+	if err := keyStore.LoadFromFile(keyFilePath); err != nil {
+		logger.Errorf("Failed to load API keys from %s: %v", keyFilePath, err)
+		// 不要因为密钥文件加载失败就停止服务，而是创建默认密钥
 	}
 
-	// 从配置中加载API密钥
-	if keys, ok := config["keys"].(map[string]interface{}); ok {
-		for keyStr, keyConfig := range keys {
-			if keyData, ok := keyConfig.(map[string]interface{}); ok {
-				// 解析用户ID
-				userID := "unknown"
-				if id, ok := keyData["id"].(string); ok {
-					userID = id
-				}
-
-				// 解析频率限制
-				requestsPerMinute := 100 // 默认限制
-				if rpm, ok := keyData["requests_per_minute"].(int); ok {
-					requestsPerMinute = rpm
-				} else if rpm, ok := keyData["requests_per_minute"].(float64); ok {
-					requestsPerMinute = int(rpm)
-				}
-
-				// 设置身份类型
-				identityType := IdentityTypeUser
-				if strings.Contains(userID, "enterprise") || strings.Contains(userID, "backend") {
-					identityType = IdentityTypeService
-				}
-
-				// 创建限流配置
-				var rateLimits *RateLimitConfig
-				if requestsPerMinute > 0 {
-					rateLimits = &RateLimitConfig{
-						RequestsPerMinute: requestsPerMinute,
-						BurstSize:         max(requestsPerMinute/5, 10), // 爆发限制为1/5或最少10
-						WindowSize:        time.Minute,
-					}
-				} else {
-					// -1表示无限制
-					rateLimits = &RateLimitConfig{
-						RequestsPerMinute: -1,
-						BurstSize:         -1,
-						WindowSize:        time.Minute,
-					}
-				}
-
-				auth.validKeys[keyStr] = &Identity{
-					ID:   userID,
-					Type: identityType,
-					Permissions: []Permission{
-						PermissionAudioProcess,
-						PermissionAudioTranscribe,
-						PermissionAudioTranslate,
-						PermissionHealthCheck,
-					},
-					RateLimits: rateLimits,
-				}
-
-				logger.Infof("Loaded API key for user: %s, rate limit: %d req/min", userID, requestsPerMinute)
-			}
-		}
+	return &APIKeyAuthenticator{
+		keyStore: keyStore,
+		logger:   logger,
 	}
-
-	// 如果没有配置任何key，添加默认开发key
-	if len(auth.validKeys) == 0 {
-		auth.validKeys["dev-key-123"] = &Identity{
-			ID:   "dev-user",
-			Type: IdentityTypeUser,
-			Permissions: []Permission{
-				PermissionAudioProcess,
-				PermissionAudioTranscribe,
-				PermissionAudioTranslate,
-				PermissionHealthCheck,
-			},
-			RateLimits: &RateLimitConfig{
-				RequestsPerMinute: 100,
-				BurstSize:         20,
-				WindowSize:        time.Minute,
-			},
-		}
-		logger.Warn("No API keys configured, using default development key")
-	}
-
-	return auth
 }
 
 // max 辅助函数
@@ -245,20 +175,66 @@ func max(a, b int) int {
 // Authenticate 认证
 func (auth *APIKeyAuthenticator) Authenticate(ctx context.Context, credentials Credentials) (*Identity, error) {
 	if credentials.APIKey == "" {
+		auth.logger.Debug("API key is empty")
 		return nil, ErrInvalidCredentials
 	}
 
-	identity, ok := auth.validKeys[credentials.APIKey]
-	if !ok {
+	// 记录尝试使用的API key（掩码处理）
+	maskedKey := credentials.APIKey
+	if len(maskedKey) > 8 {
+		maskedKey = maskedKey[:8] + "***"
+	}
+	auth.logger.WithFields(map[string]interface{}{
+		"provided_key": maskedKey,
+		"valid_keys_count": len(auth.keyStore.Keys),
+	}).Debug("Checking API key")
+
+	// 从密钥存储中获取配置
+	keyConfig, found := auth.keyStore.GetKey(credentials.APIKey)
+	if !found {
+		// 记录所有有效的API key（掩码处理）用于调试
+		validKeys := auth.keyStore.ListKeys()
+		auth.logger.WithFields(map[string]interface{}{
+			"provided_key": maskedKey,
+			"valid_keys": validKeys,
+		}).Warn("API key not found in valid keys")
 		return nil, ErrInvalidCredentials
+	}
+
+	// 设置身份类型
+	identityType := IdentityTypeUser
+	if strings.Contains(keyConfig.ID, "enterprise") || strings.Contains(keyConfig.ID, "backend") {
+		identityType = IdentityTypeService
+	}
+
+	// 创建限流配置
+	var rateLimits *RateLimitConfig
+	if keyConfig.RequestsPerMinute > 0 {
+		rateLimits = &RateLimitConfig{
+			RequestsPerMinute: keyConfig.RequestsPerMinute,
+			BurstSize:         max(keyConfig.RequestsPerMinute/5, 10),
+			WindowSize:        time.Minute,
+		}
+	} else if keyConfig.RequestsPerMinute == -1 {
+		// -1表示无限制
+		rateLimits = &RateLimitConfig{
+			RequestsPerMinute: -1,
+			BurstSize:         -1,
+			WindowSize:        time.Minute,
+		}
 	}
 
 	return &Identity{
-		ID:          identity.ID,
-		Type:        identity.Type,
-		Permissions: identity.Permissions,
-		Metadata:    make(map[string]interface{}),
-		RateLimits:  identity.RateLimits,
+		ID:   keyConfig.ID,
+		Type: identityType,
+		Permissions: []Permission{
+			PermissionAudioProcess,
+			PermissionAudioTranscribe,
+			PermissionAudioTranslate,
+			PermissionHealthCheck,
+		},
+		Metadata:   keyConfig.Metadata,
+		RateLimits: rateLimits,
 	}, nil
 }
 

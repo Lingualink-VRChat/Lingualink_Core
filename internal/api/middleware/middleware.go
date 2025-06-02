@@ -114,9 +114,33 @@ func Auth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 		// 提取认证信息
 		credentials := extractCredentials(c)
 
+		// 添加调试日志
+		if credentials.APIKey != "" {
+			// 只记录API key的前几位，避免泄露完整密钥
+			maskedKey := credentials.APIKey
+			if len(maskedKey) > 8 {
+				maskedKey = maskedKey[:8] + "***"
+			}
+			logrus.WithFields(logrus.Fields{
+				"api_key_prefix": maskedKey,
+				"type":          credentials.Type,
+				"path":          c.Request.URL.Path,
+			}).Debug("Attempting authentication")
+		} else {
+			logrus.WithFields(logrus.Fields{
+				"path": c.Request.URL.Path,
+				"type": credentials.Type,
+			}).Debug("No API key provided")
+		}
+
 		// 执行认证
 		identity, err := authenticator.Authenticate(context.Background(), credentials)
 		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"path":  c.Request.URL.Path,
+				"error": err.Error(),
+				"type":  credentials.Type,
+			}).Warn("Authentication failed")
 			c.JSON(401, gin.H{"error": "authentication failed"})
 			c.Abort()
 			return
@@ -124,6 +148,10 @@ func Auth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 
 		// 设置身份信息
 		c.Set("identity", identity)
+		logrus.WithFields(logrus.Fields{
+			"user_id": identity.ID,
+			"path":    c.Request.URL.Path,
+		}).Debug("Authentication successful")
 		c.Next()
 	})
 }

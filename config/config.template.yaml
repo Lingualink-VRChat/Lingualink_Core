@@ -1,8 +1,6 @@
-# Lingualink Core 配置文件
 
-# 服务器配置
 server:
-  mode: development  # development/production
+  mode: production  # development/production
   port: 8080
   host: 0.0.0.0
 
@@ -11,18 +9,9 @@ auth:
   strategies:
     - type: api_key
       enabled: true
-      config:
-        keys:
-          # 开发环境测试key
-          dev-key-123:
-            id: dev-user
-            requests_per_minute: 100
-          # 商业后端专用key - 无频率限制
-          enterprise-key-2024:
-            id: enterprise-backend
-            requests_per_minute: -1  # -1表示无限制
+      config: {}
     - type: anonymous
-      enabled: true
+      enabled: false
       config:
         requests_per_minute: 10
 
@@ -96,13 +85,13 @@ prompt:
         display: "俄语"
         english: "Russian"
         native: "Русский"
-      aliases: ["russian", "俄语", "俄文", "俄罗斯语", "ru"]
+      aliases: ["russian", "俄语", "俄文", "俄罗斯语"]
     - code: it
       names:
         display: "意大利语"
         english: "Italian"
         native: "Italiano"
-      aliases: ["italian", "意大利语", "意大利文", "it"]
+      aliases: ["italian", "意大利语", "意大利文"]
   parsing:
     separators: [":", "：", "-", "—"]
     strict_mode: false
@@ -113,5 +102,5 @@ prompt:
 
 # 日志配置
 logging:
-  level: info
+  level: debug
   format: json 

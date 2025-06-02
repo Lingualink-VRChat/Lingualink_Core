@@ -1,0 +1,18 @@
+{
+    "keys": {
+      "dev-key-123": {
+        "id": "dev-user",
+        "description": "Development key",
+        "requests_per_minute": 100,
+        "enabled": true,
+        "created_at": "2025-06-02T13:37:00Z"
+      },
+      "lls-jm1Rg2Bt6HgCrDkzMou5Lu4t": {
+        "id": "enterprise-backend", 
+        "description": "Enterprise backend key",
+        "requests_per_minute": -1,
+        "enabled": true,
+        "created_at": "2025-06-02T13:37:00Z"
+      }
+    }
+  }

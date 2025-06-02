@@ -102,19 +102,19 @@ type LoggingConfig struct {
 
 // Load 加载配置
 func Load() (*Config, error) {
-	// Determine config file: prefer config.local.yaml if present
-	configDir := GetConfigDir()
-	localConfigPath := filepath.Join(configDir, "config.local.yaml")
-	if _, err := os.Stat(localConfigPath); err == nil {
-		// use local override config
-		viper.SetConfigFile(localConfigPath)
+	// 首先检查环境变量指定的配置文件
+	if configFile := os.Getenv("LINGUALINK_CONFIG_FILE"); configFile != "" {
+		viper.SetConfigFile(configFile)
+		log.Printf("Using config file from environment variable: %s", configFile)
 	} else {
-		// use default config.yaml
+		// 直接使用 config.yaml 作为默认配置文件
+		configDir := GetConfigDir()
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
 		// 配置文件搜索路径
 		viper.AddConfigPath(configDir)
 		viper.AddConfigPath(".")
+		log.Printf("Using default config file search in: %s", configDir)
 	}
 
 	// 环境变量设置
