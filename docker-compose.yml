@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   lingualink-core:
     build:
@@ -8,66 +6,14 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - LINGUALINK_SERVER_MODE=development
-      - LINGUALINK_SERVER_PORT=8080
-      - VLLM_SERVER_URL=http://vllm:8000/v1
-      - MODEL_NAME=qwen2.5-32b-instruct
-      - API_KEY=sk-VkxlIMJf6KLHpI8MN
+      - LINGUALINK_CONFIG_FILE=config/config.local.yaml
     volumes:
-      - ./config:/app/config
-      - ./templates:/app/templates
-    depends_on:
-      - vllm
-    networks:
-      - lingualink-network
-
-  vllm:
-    image: vllm/vllm-openai:latest
-    ports:
-      - "8000:8000"
-    environment:
-      - MODEL_NAME=qwen/Qwen2.5-32B-Instruct
-    command: >
-      --model qwen/Qwen2.5-32B-Instruct
-      --host 0.0.0.0
-      --port 8000
-      --served-model-name qwen2.5-32b-instruct
-    volumes:
-      - vllm-cache:/root/.cache
-    networks:
-      - lingualink-network
-    # GPU support (uncomment if you have NVIDIA GPU)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    networks:
-      - lingualink-network
-
-  # 可选的监控服务
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-    networks:
-      - lingualink-network
-
-volumes:
-  vllm-cache:
-  redis-data:
-
-networks:
-  lingualink-network:
-    driver: bridge 
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
