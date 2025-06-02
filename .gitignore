@@ -107,6 +107,6 @@ models/
 # Local templates (if customized)
 templates/local/
 
-# Monitoring and metrics data
-metrics/
+# Monitoring and metrics data (but keep source code)
+metrics/data/
 monitoring/data/ 
