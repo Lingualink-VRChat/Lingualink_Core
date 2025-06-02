@@ -243,11 +243,72 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 		return nil, fmt.Errorf("execute user template: %w", err)
 	}
 
+	// 动态生成OutputRules，使用配置文件中的完整别名列表
+	dynamicOutputRules := e.buildDynamicOutputRules(req.TargetLanguages)
+
 	return &Prompt{
 		System:      systemBuf.String(),
 		User:        userBuf.String(),
-		OutputRules: tmpl.OutputRules,
+		OutputRules: dynamicOutputRules,
 	}, nil
+}
+
+// buildDynamicOutputRules 根据目标语言动态构建OutputRules
+func (e *Engine) buildDynamicOutputRules(targetLanguageCodes []string) OutputRules {
+	sections := []OutputSection{
+		{
+			Key:      "原文",
+			Aliases:  []string{"Original", "原始文本", "Transcription", "转录", "原始", "源文本"},
+			Required: true,
+			Order:    1,
+		},
+	}
+
+	// 为每个目标语言动态创建OutputSection
+	for i, langCode := range targetLanguageCodes {
+		if lang, ok := e.languages[langCode]; ok {
+			// 构建别名列表：包括display名称和所有配置的别名
+			aliases := make([]string, 0)
+
+			// 添加所有names中的值作为别名
+			for _, name := range lang.Names {
+				if name != "" {
+					aliases = append(aliases, name)
+				}
+			}
+
+			// 添加配置文件中的所有别名
+			aliases = append(aliases, lang.Aliases...)
+
+			// 添加语言代码本身作为别名
+			aliases = append(aliases, lang.Code)
+			aliases = append(aliases, strings.ToUpper(lang.Code))
+
+			// 获取主要显示名称作为Key
+			key := lang.Names["display"]
+			if key == "" {
+				key = lang.Code // 回退到代码
+			}
+
+			section := OutputSection{
+				Key:          key,
+				Aliases:      aliases,
+				LanguageCode: lang.Code,
+				Required:     false,
+				Order:        i + 2, // 从2开始，因为"原文"是1
+			}
+
+			sections = append(sections, section)
+		} else {
+			e.logger.Warnf("Language definition not found for code: %s", langCode)
+		}
+	}
+
+	return OutputRules{
+		Format:    FormatStructured,
+		Separator: ":",
+		Sections:  sections,
+	}
 }
 
 // convertCodesToDisplayNames 将短代码转换为中文显示名称
@@ -325,7 +386,7 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 		parser.separators = []string{":", "：", "->", "=>"}
 	}
 
-	// 首先使用标准解析器解析（得到中文名称键）
+	// 首先使用标准解析器解析（得到原始键值对）
 	tempParsed, err := parser.Parse(content, rules)
 	if err != nil {
 		return &ParsedResponse{
@@ -335,12 +396,12 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 		}, err
 	}
 
-	// 将中文显示名称键转换为短代码
+	// 将键转换为短代码
 	finalSections := make(map[string]string)
 	e.logger.WithField("tempParsedSections", tempParsed.Sections).Debug("Original parsed sections before conversion")
 
 	for keyFromLLM, value := range tempParsed.Sections {
-		// 查找匹配的OutputSection规则
+		// 1. 首先尝试使用OutputRules匹配
 		foundRule := false
 		for _, sectionRule := range rules.Sections {
 			isMatch := sectionRule.Key == keyFromLLM
@@ -360,6 +421,7 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 					e.logger.WithFields(logrus.Fields{
 						"llmKey":         keyFromLLM,
 						"finalKey":       sectionRule.LanguageCode,
+						"method":         "outputrules",
 						"sectionRuleKey": sectionRule.Key,
 					}).Debug("Converted LLM key to language code")
 				} else {
@@ -371,8 +433,22 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 			}
 		}
 
+		// 2. 如果OutputRules没有匹配到，尝试通用语言识别
 		if !foundRule {
-			e.logger.Warnf("Parsed section key '%s' from LLM does not match any output rule section key or alias. Skipping.", keyFromLLM)
+			if langCode, err := e.identifyLanguageFromText(keyFromLLM); err == nil {
+				finalSections[langCode] = value
+				e.logger.WithFields(logrus.Fields{
+					"llmKey":   keyFromLLM,
+					"finalKey": langCode,
+					"method":   "fallback_language_identification",
+				}).Debug("Converted LLM key to language code using fallback")
+				foundRule = true
+			}
+		}
+
+		// 3. 如果还是没有匹配到，记录警告
+		if !foundRule {
+			e.logger.Warnf("Parsed section key '%s' from LLM does not match any known language or section. Skipping.", keyFromLLM)
 		}
 	}
 
@@ -381,6 +457,56 @@ func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedRespon
 		Sections: finalSections,
 		Metadata: tempParsed.Metadata,
 	}, nil
+}
+
+// identifyLanguageFromText 通过文本识别语言代码
+func (e *Engine) identifyLanguageFromText(text string) (string, error) {
+	// 标准化输入
+	normalizedText := strings.TrimSpace(text)
+
+	// 直接尝试语言代码匹配
+	if code, err := e.normalizeLanguage(normalizedText); err == nil {
+		return code, nil
+	}
+
+	// 尝试更宽松的匹配
+	cleanedText := strings.ToLower(strings.TrimSpace(normalizedText))
+
+	for langCode, lang := range e.languages {
+		// 检查display名称
+		for _, name := range lang.Names {
+			if strings.EqualFold(cleanedText, name) {
+				return langCode, nil
+			}
+		}
+
+		// 检查别名
+		for _, alias := range lang.Aliases {
+			if strings.EqualFold(cleanedText, alias) {
+				return langCode, nil
+			}
+		}
+
+		// 检查语言代码
+		if strings.EqualFold(cleanedText, langCode) {
+			return langCode, nil
+		}
+
+		// 检查部分匹配（用于处理如"英语翻译"这样的变体）
+		for _, alias := range lang.Aliases {
+			if strings.Contains(cleanedText, strings.ToLower(alias)) && len(alias) > 2 {
+				return langCode, nil
+			}
+		}
+
+		for _, name := range lang.Names {
+			if strings.Contains(cleanedText, strings.ToLower(name)) && len(name) > 2 {
+				return langCode, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no language identified for text: %s", text)
 }
 
 // StructuredParser 结构化文本解析器

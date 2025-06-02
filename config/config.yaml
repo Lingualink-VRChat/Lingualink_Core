@@ -91,6 +91,18 @@ prompt:
         english: "German"
         native: "Deutsch"
       aliases: ["german", "德语", "deutsch"]
+    - code: ru
+      names:
+        display: "俄语"
+        english: "Russian"
+        native: "Русский"
+      aliases: ["russian", "俄语", "俄文", "俄罗斯语", "ru"]
+    - code: it
+      names:
+        display: "意大利语"
+        english: "Italian"
+        native: "Italiano"
+      aliases: ["italian", "意大利语", "意大利文", "it"]
   parsing:
     separators: [":", "：", "-", "—"]
     strict_mode: false
