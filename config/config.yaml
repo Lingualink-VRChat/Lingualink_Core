@@ -13,9 +13,14 @@ auth:
       enabled: true
       config:
         keys:
+          # 开发环境测试key
           dev-key-123:
             id: dev-user
             requests_per_minute: 100
+          # 商业后端专用key - 无频率限制
+          enterprise-key-2024:
+            id: enterprise-backend
+            requests_per_minute: -1  # -1表示无限制
     - type: anonymous
       enabled: true
       config:
@@ -36,45 +41,56 @@ backends:
 prompt:
   defaults:
     task: translate
-    target_languages: ["英文", "日文", "中文"]
-    template: default
-  template_dir: ./templates
+    target_languages: ["en", "ja", "zh"]
   languages:
     - code: zh
       names:
         display: "中文"
         english: "Chinese"
-      aliases: ["chinese", "中文", "汉语"]
+        native: "中文"
+      aliases: ["chinese", "中文", "汉语", "zh-cn"]
+    - code: zh-hant
+      names:
+        display: "繁體中文"
+        english: "Traditional Chinese"
+        native: "繁體中文"
+      aliases: ["zh-tw", "zh-hk", "traditional chinese", "繁体中文", "繁體中文"]
     - code: en
       names:
-        display: "English"
-        chinese: "英文"
+        display: "英文"
+        english: "English"
+        native: "English"
       aliases: ["english", "英文", "英语"]
     - code: ja
       names:
-        display: "日本語"
-        chinese: "日文"
-      aliases: ["japanese", "日文", "日语"]
+        display: "日文"
+        english: "Japanese"
+        native: "日本語"
+      aliases: ["japanese", "日文", "日语", "日本語"]
     - code: ko
       names:
-        display: "한국어"
-        chinese: "韩文"
-      aliases: ["korean", "韩文", "韩语"]
+        display: "韩文"
+        english: "Korean"
+        native: "한국어"
+      aliases: ["korean", "韩文", "韩语", "한국어"]
     - code: es
       names:
-        display: "Español"
-        chinese: "西班牙语"
-      aliases: ["spanish", "西班牙语"]
+        display: "西班牙语"
+        english: "Spanish"
+        native: "Español"
+      aliases: ["spanish", "西班牙语", "español"]
     - code: fr
       names:
-        display: "Français"
-        chinese: "法语"
-      aliases: ["french", "法语"]
+        display: "法语"
+        english: "French"
+        native: "Français"
+      aliases: ["french", "法语", "français"]
     - code: de
       names:
-        display: "Deutsch"
-        chinese: "德语"
-      aliases: ["german", "德语"]
+        display: "德语"
+        english: "German"
+        native: "Deutsch"
+      aliases: ["german", "德语", "deutsch"]
   parsing:
     separators: [":", "：", "-", "—"]
     strict_mode: false

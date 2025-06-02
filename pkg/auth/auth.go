@@ -153,24 +153,93 @@ func NewAPIKeyAuthenticator(config map[string]interface{}, logger *logrus.Logger
 		logger:    logger,
 	}
 
-	// 添加默认API密钥（仅用于开发）
-	auth.validKeys["dev-key-123"] = &Identity{
-		ID:   "dev-user",
-		Type: IdentityTypeUser,
-		Permissions: []Permission{
-			PermissionAudioProcess,
-			PermissionAudioTranscribe,
-			PermissionAudioTranslate,
-			PermissionHealthCheck,
-		},
-		RateLimits: &RateLimitConfig{
-			RequestsPerMinute: 100,
-			BurstSize:         20,
-			WindowSize:        time.Minute,
-		},
+	// 从配置中加载API密钥
+	if keys, ok := config["keys"].(map[string]interface{}); ok {
+		for keyStr, keyConfig := range keys {
+			if keyData, ok := keyConfig.(map[string]interface{}); ok {
+				// 解析用户ID
+				userID := "unknown"
+				if id, ok := keyData["id"].(string); ok {
+					userID = id
+				}
+
+				// 解析频率限制
+				requestsPerMinute := 100 // 默认限制
+				if rpm, ok := keyData["requests_per_minute"].(int); ok {
+					requestsPerMinute = rpm
+				} else if rpm, ok := keyData["requests_per_minute"].(float64); ok {
+					requestsPerMinute = int(rpm)
+				}
+
+				// 设置身份类型
+				identityType := IdentityTypeUser
+				if strings.Contains(userID, "enterprise") || strings.Contains(userID, "backend") {
+					identityType = IdentityTypeService
+				}
+
+				// 创建限流配置
+				var rateLimits *RateLimitConfig
+				if requestsPerMinute > 0 {
+					rateLimits = &RateLimitConfig{
+						RequestsPerMinute: requestsPerMinute,
+						BurstSize:         max(requestsPerMinute/5, 10), // 爆发限制为1/5或最少10
+						WindowSize:        time.Minute,
+					}
+				} else {
+					// -1表示无限制
+					rateLimits = &RateLimitConfig{
+						RequestsPerMinute: -1,
+						BurstSize:         -1,
+						WindowSize:        time.Minute,
+					}
+				}
+
+				auth.validKeys[keyStr] = &Identity{
+					ID:   userID,
+					Type: identityType,
+					Permissions: []Permission{
+						PermissionAudioProcess,
+						PermissionAudioTranscribe,
+						PermissionAudioTranslate,
+						PermissionHealthCheck,
+					},
+					RateLimits: rateLimits,
+				}
+
+				logger.Infof("Loaded API key for user: %s, rate limit: %d req/min", userID, requestsPerMinute)
+			}
+		}
+	}
+
+	// 如果没有配置任何key，添加默认开发key
+	if len(auth.validKeys) == 0 {
+		auth.validKeys["dev-key-123"] = &Identity{
+			ID:   "dev-user",
+			Type: IdentityTypeUser,
+			Permissions: []Permission{
+				PermissionAudioProcess,
+				PermissionAudioTranscribe,
+				PermissionAudioTranslate,
+				PermissionHealthCheck,
+			},
+			RateLimits: &RateLimitConfig{
+				RequestsPerMinute: 100,
+				BurstSize:         20,
+				WindowSize:        time.Minute,
+			},
+		}
+		logger.Warn("No API keys configured, using default development key")
 	}
 
 	return auth
+}
+
+// max 辅助函数
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Authenticate 认证

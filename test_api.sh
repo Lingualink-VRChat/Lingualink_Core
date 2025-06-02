@@ -173,18 +173,16 @@ main() {
     if [[ -f "$TEST_AUDIO_WAV" ]]; then
         test_endpoint "POST" "/api/v1/process" "音频处理 - WAV文件（表单方式）" \
             "-F 'audio=@$TEST_AUDIO_WAV' \
-             -F 'task=both' \
-             -F 'target_languages=英文,日文' \
-             -F 'template=default'"
+             -F 'task=translate' \
+             -F 'target_languages=en,ja'"
     fi
     
     # 8. 表单方式上传音频（OPUS）
     if [[ -f "$TEST_AUDIO_OPUS" ]]; then
         test_endpoint "POST" "/api/v1/process" "音频处理 - OPUS文件（表单方式）" \
             "-F 'audio=@$TEST_AUDIO_OPUS' \
-             -F 'task=transcribe' \
-             -F 'target_languages=中文' \
-             -F 'user_prompt=请准确转录这段音频'"
+             -F 'task=translate' \
+             -F 'target_languages=zh'"
     fi
     
     # 9. JSON方式处理音频
@@ -198,8 +196,7 @@ main() {
                 \"audio\": \"$audio_base64\",
                 \"audio_format\": \"wav\",
                 \"task\": \"translate\",
-                \"target_languages\": [\"英文\"],
-                \"user_prompt\": \"请将音频内容翻译成英文\"
+                \"target_languages\": [\"en\"]
              }'"
     fi
     
@@ -214,7 +211,7 @@ main() {
     response=$(curl -s -w "\nHTTP_CODE:%{http_code}" \
         -H "X-API-Key: $API_KEY" \
         -F 'audio=@/tmp/invalid.txt' \
-        -F 'task=transcribe' \
+        -F 'task=translate' \
         "$BASE_URL/api/v1/process")
     http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
     if [[ "$http_code" == "400" ]]; then
@@ -227,7 +224,7 @@ main() {
     # 11. 缺少必需参数
     test_endpoint "POST" "/api/v1/process/json" "缺少必需参数测试" \
         "-H 'Content-Type: application/json' \
-         -d '{\"task\": \"transcribe\"}'"
+         -d '{\"task\": \"translate\"}'"
     
     # 12. 无效的任务类型
     test_endpoint "POST" "/api/v1/process/json" "无效任务类型测试" \

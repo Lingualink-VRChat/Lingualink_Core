@@ -62,17 +62,15 @@ type BackendProvider struct {
 
 // PromptConfig 提示词配置
 type PromptConfig struct {
-	Defaults    PromptDefaults `mapstructure:"defaults"`
-	TemplateDir string         `mapstructure:"template_dir"`
-	Languages   []Language     `mapstructure:"languages"`
-	Parsing     ParsingConfig  `mapstructure:"parsing"`
+	Defaults  PromptDefaults `mapstructure:"defaults"`
+	Languages []Language     `mapstructure:"languages"`
+	Parsing   ParsingConfig  `mapstructure:"parsing"`
 }
 
 // PromptDefaults 提示词默认设置
 type PromptDefaults struct {
 	Task            string   `mapstructure:"task"`
 	TargetLanguages []string `mapstructure:"target_languages"`
-	Template        string   `mapstructure:"template"`
 }
 
 // Language 语言定义
@@ -170,10 +168,48 @@ func setDefaults() {
 	})
 
 	// 提示词默认配置
-	viper.SetDefault("prompt.defaults.task", "both")
-	viper.SetDefault("prompt.defaults.target_languages", []string{"英文", "日文", "中文"})
-	viper.SetDefault("prompt.defaults.template", "default")
-	viper.SetDefault("prompt.template_dir", "./templates")
+	viper.SetDefault("prompt.defaults.task", "translate")
+	viper.SetDefault("prompt.defaults.target_languages", []string{"en", "ja", "zh"})
+
+	// 默认语言配置
+	viper.SetDefault("prompt.languages", []map[string]interface{}{
+		{
+			"code": "zh",
+			"names": map[string]string{
+				"display": "中文",
+				"english": "Chinese",
+				"native":  "中文",
+			},
+			"aliases": []string{"chinese", "中文", "汉语", "zh-cn"},
+		},
+		{
+			"code": "zh-hant",
+			"names": map[string]string{
+				"display": "繁體中文",
+				"english": "Traditional Chinese",
+				"native":  "繁體中文",
+			},
+			"aliases": []string{"zh-tw", "zh-hk", "traditional chinese", "繁体中文", "繁體中文"},
+		},
+		{
+			"code": "en",
+			"names": map[string]string{
+				"display": "英文",
+				"english": "English",
+				"native":  "English",
+			},
+			"aliases": []string{"english", "英文", "英语"},
+		},
+		{
+			"code": "ja",
+			"names": map[string]string{
+				"display": "日文",
+				"english": "Japanese",
+				"native":  "日本語",
+			},
+			"aliases": []string{"japanese", "日文", "日语", "日本語"},
+		},
+	})
 
 	// 日志默认配置
 	viper.SetDefault("logging.level", "info")

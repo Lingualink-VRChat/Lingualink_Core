@@ -10,7 +10,6 @@ import (
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v3"
 )
 
 // TaskType 任务类型
@@ -37,11 +36,10 @@ const (
 type PromptRequest struct {
 	Task            TaskType               `json:"task"`
 	SourceLanguage  string                 `json:"source_language"`
-	TargetLanguages []string               `json:"target_languages"`
-	Template        string                 `json:"template"`
+	TargetLanguages []string               `json:"target_languages"` // 接收短代码
 	Variables       map[string]interface{} `json:"variables"`
 	OutputFormat    OutputFormat           `json:"output_format"`
-	UserPrompt      string                 `json:"user_prompt"`
+	// 移除 UserPrompt，改为服务端控制
 }
 
 // Prompt 生成的提示词
@@ -60,9 +58,9 @@ type OutputRules struct {
 
 // OutputSection 输出段落定义
 type OutputSection struct {
-	Key          string   `json:"key"`
-	Aliases      []string `json:"aliases"`
-	LanguageCode string   `json:"language_code"`
+	Key          string   `json:"key"`           // LLM输出的中文名称（如"英文"）
+	Aliases      []string `json:"aliases"`       // 别名
+	LanguageCode string   `json:"language_code"` // 对应的短代码（如"en"）
 	Required     bool     `json:"required"`
 	Order        int      `json:"order"`
 }
@@ -87,33 +85,36 @@ type Language struct {
 
 // Engine 提示词引擎
 type Engine struct {
-	templates map[string]*PromptTemplate
-	languages map[string]*Language
-	config    config.PromptConfig
-	logger    *logrus.Logger
+	templates       map[string]*PromptTemplate // 当前只存储硬编码的默认模板
+	languages       map[string]*Language       // 按短代码索引
+	languageNameMap map[string]string          // 中文显示名称到短代码的映射
+	config          config.PromptConfig
+	logger          *logrus.Logger
 }
 
 // NewEngine 创建提示词引擎
 func NewEngine(cfg config.PromptConfig, logger *logrus.Logger) (*Engine, error) {
 	engine := &Engine{
-		templates: make(map[string]*PromptTemplate),
-		languages: make(map[string]*Language),
-		config:    cfg,
-		logger:    logger,
+		templates:       make(map[string]*PromptTemplate),
+		languages:       make(map[string]*Language),
+		languageNameMap: make(map[string]string),
+		config:          cfg,
+		logger:          logger,
 	}
 
-	// 加载语言配置
+	// 加载语言配置（现在配置中总是会有默认语言）
 	for _, lang := range cfg.Languages {
-		engine.languages[lang.Code] = &Language{
+		langDef := &Language{
 			Code:    lang.Code,
 			Names:   lang.Names,
 			Aliases: lang.Aliases,
 		}
-	}
+		engine.languages[lang.Code] = langDef
 
-	// 加载默认语言
-	if len(engine.languages) == 0 {
-		engine.loadDefaultLanguages()
+		// 建立中文显示名称到短代码的映射
+		if displayName, ok := lang.Names["display"]; ok {
+			engine.languageNameMap[displayName] = lang.Code
+		}
 	}
 
 	// 加载默认模板
@@ -124,43 +125,6 @@ func NewEngine(cfg config.PromptConfig, logger *logrus.Logger) (*Engine, error) 
 	return engine, nil
 }
 
-// loadDefaultLanguages 加载默认语言
-func (e *Engine) loadDefaultLanguages() {
-	defaultLanguages := map[string]*Language{
-		"zh": {
-			Code: "zh",
-			Names: map[string]string{
-				"display": "中文",
-				"english": "Chinese",
-				"native":  "中文",
-			},
-			Aliases: []string{"chinese", "中文", "汉语", "zh-CN", "zh-TW"},
-		},
-		"en": {
-			Code: "en",
-			Names: map[string]string{
-				"display": "英文",
-				"english": "English",
-				"native":  "English",
-			},
-			Aliases: []string{"english", "英文", "英语"},
-		},
-		"ja": {
-			Code: "ja",
-			Names: map[string]string{
-				"display": "日文",
-				"english": "Japanese",
-				"native":  "日本語",
-			},
-			Aliases: []string{"japanese", "日文", "日语", "日本語"},
-		},
-	}
-
-	for code, lang := range defaultLanguages {
-		e.languages[code] = lang
-	}
-}
-
 // loadDefaultTemplate 加载默认模板
 func (e *Engine) loadDefaultTemplate() error {
 	defaultTemplate := &PromptTemplate{
@@ -169,16 +133,16 @@ func (e *Engine) loadDefaultTemplate() error {
 		Description: "默认音频处理模板",
 		SystemPrompt: `你是一个高级的语音处理助手。你的任务是：
 1. 首先将音频内容转录成其原始语言的文本。
-{{- range $index, $lang := .TargetLanguages }}
-{{ add $index 2 }}. 将文本翻译成{{ $lang }}。
+{{- range $index, $langName := .TargetLanguageNames }}
+{{ add $index 2 }}. 将文本翻译成{{ $langName }}。
 {{- end }}
 
 请按照以下格式清晰地组织你的输出：
 原文:
-{{- range .TargetLanguages }}
+{{- range .TargetLanguageNames }}
 {{ . }}:
 {{- end }}`,
-		UserPrompt: `{{ .UserPrompt | default "请处理下面的音频。" }}`,
+		UserPrompt: `请处理下面的音频内容。`, // 固定用户提示词，不允许客户端修改
 		OutputRules: OutputRules{
 			Format:    FormatStructured,
 			Separator: ":",
@@ -207,6 +171,12 @@ func (e *Engine) loadDefaultTemplate() error {
 					LanguageCode: "zh",
 					Order:        4,
 				},
+				{
+					Key:          "繁體中文",
+					Aliases:      []string{"Traditional Chinese", "繁体中文"},
+					LanguageCode: "zh-hant",
+					Order:        5,
+				},
 			},
 		},
 	}
@@ -218,29 +188,26 @@ func (e *Engine) loadDefaultTemplate() error {
 // Build 构建提示词
 func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) {
 	// 获取模板
-	templateName := req.Template
-	if templateName == "" {
-		templateName = e.config.Defaults.Template
-	}
+	templateName := "default"
 
 	tmpl, ok := e.templates[templateName]
 	if !ok {
 		return nil, fmt.Errorf("template not found: %s", templateName)
 	}
 
-	// 标准化目标语言
-	normalizedTargetLangs, err := e.normalizeLanguages(req.TargetLanguages)
+	// 将短代码转换为中文显示名称用于构建LLM prompt
+	targetLanguageNames, err := e.convertCodesToDisplayNames(req.TargetLanguages)
 	if err != nil {
-		return nil, fmt.Errorf("normalize target languages: %w", err)
+		return nil, fmt.Errorf("convert target language codes: %w", err)
 	}
 
 	// 准备模板数据
 	data := map[string]interface{}{
-		"Task":            req.Task,
-		"SourceLanguage":  req.SourceLanguage,
-		"TargetLanguages": normalizedTargetLangs,
-		"UserPrompt":      req.UserPrompt,
-		"Variables":       req.Variables,
+		"Task":                req.Task,
+		"SourceLanguage":      req.SourceLanguage,
+		"TargetLanguageCodes": req.TargetLanguages, // 保留原始短代码
+		"TargetLanguageNames": targetLanguageNames, // 用于模板的中文显示名称
+		"Variables":           req.Variables,
 	}
 
 	// 添加模板函数
@@ -265,7 +232,7 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 		return nil, fmt.Errorf("execute system template: %w", err)
 	}
 
-	// 渲染用户提示词
+	// 渲染用户提示词（固定内容，不受客户端控制）
 	userTmpl, err := template.New("user").Funcs(funcMap).Parse(tmpl.UserPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("parse user template: %w", err)
@@ -283,30 +250,30 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 	}, nil
 }
 
-// normalizeLanguages 标准化语言列表
-func (e *Engine) normalizeLanguages(languages []string) ([]string, error) {
-	var normalized []string
-	for _, lang := range languages {
-		code, err := e.normalizeLanguage(lang)
+// convertCodesToDisplayNames 将短代码转换为中文显示名称
+func (e *Engine) convertCodesToDisplayNames(codes []string) ([]string, error) {
+	var displayNames []string
+	for _, code := range codes {
+		normalizedCode, err := e.normalizeLanguage(code)
 		if err != nil {
-			return nil, fmt.Errorf("normalize language %s: %w", lang, err)
+			return nil, fmt.Errorf("normalize language code %s: %w", code, err)
 		}
 
-		// 获取显示名称
-		if langDef, ok := e.languages[code]; ok {
-			if displayName, ok := langDef.Names["display"]; ok {
-				normalized = append(normalized, displayName)
+		if lang, ok := e.languages[normalizedCode]; ok {
+			if displayName, ok := lang.Names["display"]; ok {
+				displayNames = append(displayNames, displayName)
 			} else {
-				normalized = append(normalized, code)
+				e.logger.Warnf("Display name not found for language code: %s, using code itself", normalizedCode)
+				displayNames = append(displayNames, normalizedCode)
 			}
 		} else {
-			normalized = append(normalized, code)
+			return nil, fmt.Errorf("language definition not found for code: %s", normalizedCode)
 		}
 	}
-	return normalized, nil
+	return displayNames, nil
 }
 
-// normalizeLanguage 标准化单个语言
+// normalizeLanguage 标准化单个语言（输入可以是代码或别名）
 func (e *Engine) normalizeLanguage(input string) (string, error) {
 	input = strings.TrimSpace(strings.ToLower(input))
 
@@ -317,6 +284,14 @@ func (e *Engine) normalizeLanguage(input string) (string, error) {
 
 	// 别名匹配
 	for code, lang := range e.languages {
+		// 检查display名称
+		if displayName, ok := lang.Names["display"]; ok {
+			if strings.EqualFold(input, displayName) {
+				return code, nil
+			}
+		}
+
+		// 检查别名
 		for _, alias := range lang.Aliases {
 			if strings.EqualFold(input, alias) {
 				return code, nil
@@ -327,21 +302,78 @@ func (e *Engine) normalizeLanguage(input string) (string, error) {
 	return "", fmt.Errorf("unknown language: %s", input)
 }
 
+// GetLanguages 获取所有支持的语言
+func (e *Engine) GetLanguages() map[string]*Language {
+	return e.languages
+}
+
 // ParsedResponse 解析后的响应
 type ParsedResponse struct {
 	RawText  string                 `json:"raw_text"`
-	Sections map[string]string      `json:"sections"`
+	Sections map[string]string      `json:"sections"` // 键为短代码或特殊键（如"原文"）
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
 // ParseResponse 解析LLM响应
 func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedResponse, error) {
 	parser := &StructuredParser{
-		separators: []string{":", "：", "->", "=>"},
+		separators: e.config.Parsing.Separators,
 		logger:     e.logger,
 	}
 
-	return parser.Parse(content, rules)
+	if len(parser.separators) == 0 {
+		parser.separators = []string{":", "：", "->", "=>"}
+	}
+
+	// 首先使用标准解析器解析（得到中文名称键）
+	tempParsed, err := parser.Parse(content, rules)
+	if err != nil {
+		return &ParsedResponse{
+			RawText:  content,
+			Sections: make(map[string]string),
+			Metadata: map[string]interface{}{"parse_error": err.Error()},
+		}, err
+	}
+
+	// 将中文显示名称键转换为短代码
+	finalSections := make(map[string]string)
+	for keyFromLLM, value := range tempParsed.Sections {
+		// 查找匹配的OutputSection规则
+		foundRule := false
+		for _, sectionRule := range rules.Sections {
+			isMatch := sectionRule.Key == keyFromLLM
+			if !isMatch {
+				for _, alias := range sectionRule.Aliases {
+					if alias == keyFromLLM {
+						isMatch = true
+						break
+					}
+				}
+			}
+
+			if isMatch {
+				if sectionRule.LanguageCode != "" {
+					// 语言翻译段落，使用短代码作为键
+					finalSections[sectionRule.LanguageCode] = value
+				} else {
+					// 非语言段落（如"原文"），保持原键
+					finalSections[sectionRule.Key] = value
+				}
+				foundRule = true
+				break
+			}
+		}
+
+		if !foundRule {
+			e.logger.Warnf("Parsed section key '%s' from LLM does not match any output rule section key or alias. Skipping.", keyFromLLM)
+		}
+	}
+
+	return &ParsedResponse{
+		RawText:  tempParsed.RawText,
+		Sections: finalSections,
+		Metadata: tempParsed.Metadata,
+	}, nil
 }
 
 // StructuredParser 结构化文本解析器
@@ -463,16 +495,4 @@ func (p *StructuredParser) fuzzyMatch(input, pattern string) bool {
 	}
 
 	return false
-}
-
-// RegisterTemplate 注册模板
-func (e *Engine) RegisterTemplate(name string, templateData []byte) error {
-	var tmpl PromptTemplate
-	if err := yaml.Unmarshal(templateData, &tmpl); err != nil {
-		return fmt.Errorf("unmarshal template: %w", err)
-	}
-
-	e.templates[name] = &tmpl
-	e.logger.Infof("Registered template: %s", name)
-	return nil
 }

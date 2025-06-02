@@ -81,7 +81,7 @@ func (h *Handler) ProcessAudio(c *gin.Context) {
 	task := prompt.TaskType(c.DefaultPostForm("task", "translate"))
 	sourceLanguage := c.PostForm("source_language")
 
-	// 修复目标语言解析 - 支持逗号分隔的字符串
+	// 修复目标语言解析 - 支持逗号分隔的字符串（期望短代码）
 	targetLanguagesStr := c.PostForm("target_languages")
 	var targetLanguages []string
 	if targetLanguagesStr != "" {
@@ -101,8 +101,8 @@ func (h *Handler) ProcessAudio(c *gin.Context) {
 		targetLanguages = c.PostFormArray("target_languages")
 	}
 
-	template := c.PostForm("template")
-	userPrompt := c.PostForm("user_prompt")
+	// 移除template处理，使用硬编码的默认模板
+	// 移除 user_prompt 的处理，改为服务端控制
 
 	// 构建处理请求
 	req := audio.ProcessRequest{
@@ -111,8 +111,7 @@ func (h *Handler) ProcessAudio(c *gin.Context) {
 		Task:            task,
 		SourceLanguage:  sourceLanguage,
 		TargetLanguages: targetLanguages,
-		Template:        template,
-		UserPrompt:      userPrompt,
+		// 移除Template和UserPrompt字段
 	}
 
 	// 处理音频
@@ -218,14 +217,14 @@ func (h *Handler) ProcessAudioJSON(c *gin.Context) {
 	h.logger.WithField("user_id", userIdentity.ID).Info("Processing JSON audio request")
 
 	var req struct {
-		Audio           string                 `json:"audio"` // base64编码的音频数据
-		AudioFormat     string                 `json:"audio_format"`
-		Task            prompt.TaskType        `json:"task"`
-		SourceLanguage  string                 `json:"source_language,omitempty"`
-		TargetLanguages []string               `json:"target_languages"`
-		Template        string                 `json:"template,omitempty"`
-		UserPrompt      string                 `json:"user_prompt,omitempty"`
-		Options         map[string]interface{} `json:"options,omitempty"`
+		Audio           string          `json:"audio"` // base64编码的音频数据
+		AudioFormat     string          `json:"audio_format"`
+		Task            prompt.TaskType `json:"task"`
+		SourceLanguage  string          `json:"source_language,omitempty"`
+		TargetLanguages []string        `json:"target_languages"` // 期望短代码
+		// 移除Template字段，使用硬编码的默认模板
+		// 移除 UserPrompt 字段，改为服务端控制
+		Options map[string]interface{} `json:"options,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -248,9 +247,8 @@ func (h *Handler) ProcessAudioJSON(c *gin.Context) {
 		Task:            req.Task,
 		SourceLanguage:  req.SourceLanguage,
 		TargetLanguages: req.TargetLanguages,
-		Template:        req.Template,
-		UserPrompt:      req.UserPrompt,
-		Options:         req.Options,
+		// 移除Template和UserPrompt字段
+		Options: req.Options,
 	}
 
 	// 处理音频
@@ -292,15 +290,7 @@ func (h *Handler) GetProcessingStatus(c *gin.Context) {
 
 // ListSupportedLanguages 列出支持的语言
 func (h *Handler) ListSupportedLanguages(c *gin.Context) {
-	languages := []map[string]interface{}{
-		{"code": "zh", "name": "中文", "aliases": []string{"chinese", "中文", "汉语"}},
-		{"code": "en", "name": "English", "aliases": []string{"english", "英文", "英语"}},
-		{"code": "ja", "name": "日本語", "aliases": []string{"japanese", "日文", "日语"}},
-		{"code": "ko", "name": "한국어", "aliases": []string{"korean", "韩文", "韩语"}},
-		{"code": "es", "name": "Español", "aliases": []string{"spanish", "西班牙语"}},
-		{"code": "fr", "name": "Français", "aliases": []string{"french", "法语"}},
-		{"code": "de", "name": "Deutsch", "aliases": []string{"german", "德语"}},
-	}
+	languages := h.audioProcessor.GetSupportedLanguages()
 
 	c.JSON(http.StatusOK, gin.H{
 		"languages": languages,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
@@ -13,14 +14,14 @@ import (
 
 // ProcessRequest 音频处理请求
 type ProcessRequest struct {
-	Audio           []byte                 `json:"audio"`
-	AudioFormat     string                 `json:"audio_format"`
-	Task            prompt.TaskType        `json:"task"`
-	SourceLanguage  string                 `json:"source_language,omitempty"`
-	TargetLanguages []string               `json:"target_languages"`
-	Template        string                 `json:"template,omitempty"`
-	UserPrompt      string                 `json:"user_prompt,omitempty"`
-	Options         map[string]interface{} `json:"options,omitempty"`
+	Audio           []byte          `json:"audio"`
+	AudioFormat     string          `json:"audio_format"`
+	Task            prompt.TaskType `json:"task"`
+	SourceLanguage  string          `json:"source_language,omitempty"`
+	TargetLanguages []string        `json:"target_languages"` // 接收短代码
+	// 移除Template字段，使用硬编码的默认模板
+	// 移除 UserPrompt，改为服务端控制
+	Options map[string]interface{} `json:"options,omitempty"`
 }
 
 // ProcessResponse 音频处理响应
@@ -28,7 +29,7 @@ type ProcessResponse struct {
 	RequestID      string                 `json:"request_id"`
 	Status         string                 `json:"status"`
 	Transcription  string                 `json:"transcription,omitempty"`
-	Translations   map[string]string      `json:"translations,omitempty"`
+	Translations   map[string]string      `json:"translations,omitempty"` // 键为短代码
 	RawResponse    string                 `json:"raw_response"`
 	ProcessingTime float64                `json:"processing_time"`
 	Metadata       map[string]interface{} `json:"metadata"`
@@ -40,6 +41,7 @@ type Processor struct {
 	promptEngine   *prompt.Engine
 	audioConverter *AudioConverter
 	metrics        metrics.MetricsCollector
+	config         config.PromptConfig
 	logger         *logrus.Logger
 }
 
@@ -47,6 +49,7 @@ type Processor struct {
 func NewProcessor(
 	llmManager *llm.Manager,
 	promptEngine *prompt.Engine,
+	cfg config.PromptConfig,
 	logger *logrus.Logger,
 	metricsCollector metrics.MetricsCollector,
 ) *Processor {
@@ -55,6 +58,7 @@ func NewProcessor(
 		promptEngine:   promptEngine,
 		audioConverter: NewAudioConverter(logger),
 		metrics:        metricsCollector,
+		config:         cfg,
 		logger:         logger,
 	}
 }
@@ -111,19 +115,17 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		}
 	}
 
-	// 4. 标准化目标语言
-	targetLangs := req.TargetLanguages
-	if len(targetLangs) == 0 {
-		targetLangs = []string{"英文", "日文", "中文"} // 默认目标语言
+	// 4. 处理目标语言（使用短代码）
+	targetLangCodes := req.TargetLanguages
+	if len(targetLangCodes) == 0 {
+		targetLangCodes = p.config.Defaults.TargetLanguages // 从配置获取默认目标语言
 	}
 
-	// 5. 构建提示词
+	// 5. 构建提示词（prompt引擎会将短代码转换为中文显示名称）
 	promptReq := prompt.PromptRequest{
 		Task:            req.Task,
 		SourceLanguage:  req.SourceLanguage,
-		TargetLanguages: targetLangs,
-		Template:        req.Template,
-		UserPrompt:      req.UserPrompt,
+		TargetLanguages: targetLangCodes, // 传入短代码
 	}
 
 	promptObj, err := p.promptEngine.Build(ctx, promptReq)
@@ -147,7 +149,7 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		return nil, fmt.Errorf("llm process: %w", err)
 	}
 
-	// 7. 解析响应
+	// 7. 解析响应（ParseResponse会将中文名称键转换为短代码）
 	parsed, err := p.promptEngine.ParseResponse(llmResp.Content, promptObj.OutputRules)
 	if err != nil {
 		p.logger.WithError(err).Warn("Failed to parse LLM response, using raw response")
@@ -176,23 +178,40 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 			"processed_format":   audioFormat,
 			"conversion_applied": p.audioConverter.IsConversionNeeded(req.AudioFormat),
 		},
+		Translations: make(map[string]string),
+	}
+
+	// 如果解析失败，标记为部分成功
+	if err != nil && response.Status == "success" {
+		response.Status = "partial_success"
 	}
 
 	// 提取转录
 	if transcription, ok := parsed.Sections["原文"]; ok {
 		response.Transcription = transcription
+		// 从sections中移除，避免在translations中重复出现
+		delete(parsed.Sections, "原文")
 	}
 
-	// 提取翻译
-	response.Translations = make(map[string]string)
-	for _, lang := range targetLangs {
-		if translation, ok := parsed.Sections[lang]; ok {
-			response.Translations[lang] = translation
+	// 提取翻译（现在keys是短代码）
+	for langCode, translationText := range parsed.Sections {
+		// 验证这是一个我们期望的目标语言代码
+		isTargetLang := false
+		for _, targetCode := range targetLangCodes {
+			if langCode == targetCode {
+				isTargetLang = true
+				break
+			}
+		}
+		if isTargetLang {
+			response.Translations[langCode] = translationText
+		} else if langCode != "原文" { // "原文"已经处理过了
+			p.logger.Warnf("Unexpected section key '%s' found after parsing, not adding to translations.", langCode)
 		}
 	}
 
 	// 如果没有找到预期的段落，尝试从原始响应中提取
-	if response.Transcription == "" && len(response.Translations) == 0 {
+	if response.Transcription == "" && len(response.Translations) == 0 && err != nil {
 		p.extractFromRawResponse(response, llmResp.Content)
 	}
 
@@ -202,10 +221,10 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 	})
 
 	p.logger.WithFields(logrus.Fields{
-		"request_id":        requestID,
-		"processing_time":   response.ProcessingTime,
-		"transcription_len": len(response.Transcription),
-		"translations":      len(response.Translations),
+		"request_id":         requestID,
+		"processing_time":    response.ProcessingTime,
+		"transcription_len":  len(response.Transcription),
+		"translations_count": len(response.Translations),
 	}).Info("Audio processing completed")
 
 	return response, nil
@@ -279,13 +298,48 @@ func (p *Processor) GetSupportedFormats() []string {
 	return p.audioConverter.GetSupportedFormats()
 }
 
+// GetSupportedLanguages 获取支持的语言列表
+func (p *Processor) GetSupportedLanguages() []map[string]interface{} {
+	languages := p.promptEngine.GetLanguages()
+	result := make([]map[string]interface{}, 0, len(languages))
+
+	for _, lang := range languages {
+		langInfo := map[string]interface{}{
+			"code":    lang.Code,
+			"aliases": lang.Aliases,
+		}
+
+		// 添加所有名称信息
+		for key, value := range lang.Names {
+			langInfo[key] = value
+		}
+
+		result = append(result, langInfo)
+	}
+
+	return result
+}
+
 // GetCapabilities 获取处理器能力
 func (p *Processor) GetCapabilities() map[string]interface{} {
-	return map[string]interface{}{
+	// 从prompt engine获取支持的语言代码
+	languages := p.promptEngine.GetLanguages()
+	languageCodes := make([]string, 0, len(languages))
+	for code := range languages {
+		languageCodes = append(languageCodes, code)
+	}
+
+	capabilities := map[string]interface{}{
 		"supported_formats":   p.GetSupportedFormats(),
 		"max_audio_size":      32 * 1024 * 1024, // 32MB
 		"supported_tasks":     []string{"translate"},
-		"supported_languages": []string{"zh", "en", "ja", "ko", "es", "fr", "de"},
+		"supported_languages": languageCodes,
 		"audio_conversion":    p.audioConverter.IsFFmpegAvailable(),
 	}
+
+	// 添加音频转换器的详细指标
+	converterMetrics := p.audioConverter.GetMetrics()
+	capabilities["conversion_metrics"] = converterMetrics
+
+	return capabilities
 }
