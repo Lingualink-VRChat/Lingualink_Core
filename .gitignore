@@ -4,9 +4,9 @@
 *.dll
 *.so
 *.dylib
-server
-lingualink
-cli
+/server
+/lingualink
+/cli
 
 # Test binary, built with `go test -c`
 *.test
