@@ -7,8 +7,8 @@ Lingualink Core 是一个高性能的音频处理服务，提供音频转录和�
 ## 基础信息
 
 - **基础URL**: `http://localhost:8080/api/v1`
-- **API版本**: v1
-- **内容类型**: `application/json` 或 `multipart/form-data`
+- **API版本**: v1.1
+- **内容类型**: `application/json`
 - **认证方式**: API Key 或 JWT Token
 
 ## 认证
@@ -108,8 +108,8 @@ curl -X GET \
 {
   "supported_formats": ["wav", "mp3", "m4a", "opus", "flac"],
   "max_audio_size": 33554432,
-  "supported_tasks": ["translate", "transcribe"],
-  "supported_languages": ["en", "ja", "zh", "zh-hant"],
+  "supported_tasks": ["transcribe", "translate"],
+  "supported_languages": ["zh", "zh-hant", "en", "ja", "ko", "es", "fr", "de", "ru", "it"],
   "audio_conversion": true,
   "conversion_metrics": {
     "total_conversions": 0,
@@ -142,27 +142,57 @@ curl -X GET \
 {
   "languages": [
     {
-      "code": "en",
-      "display": "英文",
-      "aliases": ["English", "英语", "en-US", "en-GB"]
-    },
-    {
-      "code": "ja", 
-      "display": "日文",
-      "aliases": ["Japanese", "日语", "日本語", "ja-JP"]
-    },
-    {
       "code": "zh",
       "display": "中文",
-      "aliases": ["Chinese", "中文", "汉语", "zh-CN"]
+      "aliases": ["chinese", "中文", "汉语", "zh-cn"]
     },
     {
       "code": "zh-hant",
-      "display": "繁體中文", 
-      "aliases": ["Traditional Chinese", "繁体中文", "zh-TW", "zh-HK"]
+      "display": "繁體中文",
+      "aliases": ["zh-tw", "zh-hk", "traditional chinese", "繁体中文", "繁體中文"]
+    },
+    {
+      "code": "en",
+      "display": "英文",
+      "aliases": ["english", "英文", "英语"]
+    },
+    {
+      "code": "ja",
+      "display": "日文",
+      "aliases": ["japanese", "日文", "日语", "日本語"]
+    },
+    {
+      "code": "ko",
+      "display": "韩文",
+      "aliases": ["korean", "韩文", "韩语", "한국어"]
+    },
+    {
+      "code": "es",
+      "display": "西班牙语",
+      "aliases": ["spanish", "西班牙语", "español"]
+    },
+    {
+      "code": "fr",
+      "display": "法语",
+      "aliases": ["french", "法语", "français"]
+    },
+    {
+      "code": "de",
+      "display": "德语",
+      "aliases": ["german", "德语", "deutsch"]
+    },
+    {
+      "code": "ru",
+      "display": "俄语",
+      "aliases": ["russian", "俄语", "俄文", "俄罗斯语"]
+    },
+    {
+      "code": "it",
+      "display": "意大利语",
+      "aliases": ["italian", "意大利语", "意大利文"]
     }
   ],
-  "count": 4
+  "count": 10
 }
 ```
 
@@ -174,6 +204,11 @@ curl -X GET \
 **认证**: 需要
 **权限**: `audio.process`, `audio.transcribe`, `audio.translate`
 **内容类型**: `application/json`
+
+#### 任务类型说明
+
+- **`transcribe`**: 仅转录任务，将音频内容转录成其原始语言的文本，不进行翻译
+- **`translate`**: 转录+翻译任务，首先转录音频内容，然后翻译成指定的目标语言
 
 #### 请求体
 
@@ -193,15 +228,15 @@ curl -X GET \
 | 字段 | 类型 | 必需 | 描述 |
 |------|------|------|------|
 | `audio` | string | 是 | Base64编码的音频数据 |
-| `audio_format` | string | 是 | 音频格式 |
-| `task` | string | 是 | 任务类型: `transcribe` 或 `translate` |
-| `source_language` | string | 否 | 源语言代码 |
-| `target_languages` | array | 否 | 目标语言代码数组 (仅translate任务需要) |
-| `options` | object | 否 | 额外选项 |
+| `audio_format` | string | 是 | 音频格式 (wav, mp3, m4a, opus, flac) |
+| `task` | string | 是 | 任务类型: `transcribe` (仅转录) 或 `translate` (转录+翻译) |
+| `source_language` | string | 否 | 源语言代码，通常由系统自动检测 |
+| `target_languages` | array | 否 | 目标语言代码数组，仅在 `translate` 任务时需要 |
+| `options` | object | 否 | 额外选项，预留字段 |
 
 #### 请求示例
 
-**转录任务**:
+**转录任务** (仅转录，不翻译):
 ```bash
 curl -X POST \
   -H "X-API-Key: your-api-key" \
@@ -214,7 +249,7 @@ curl -X POST \
   "http://localhost:8080/api/v1/process"
 ```
 
-**翻译任务**:
+**翻译任务** (转录+翻译):
 ```bash
 curl -X POST \
   -H "X-API-Key: your-api-key" \
@@ -261,11 +296,42 @@ curl -X POST \
 |------|------|------|
 | `request_id` | string | 请求唯一标识符 |
 | `status` | string | 处理状态: `success`, `partial_success`, `failed` |
-| `transcription` | string | 转录文本 |
-| `translations` | object | 翻译结果，键为语言代码 |
+| `transcription` | string | 转录文本，所有任务都会返回 |
+| `translations` | object | 翻译结果，键为语言代码，仅 `translate` 任务返回 |
 | `raw_response` | string | LLM原始响应 |
 | `processing_time` | number | 处理时间(秒) |
 | `metadata` | object | 处理元数据 |
+
+#### 不同任务类型的响应差异
+
+**转录任务响应** (`task: "transcribe"`):
+```json
+{
+  "request_id": "req_1704067200123456",
+  "status": "success",
+  "transcription": "这是转录的文本内容",
+  "translations": {},
+  "raw_response": "原文: 这是转录的文本内容",
+  "processing_time": 1.234,
+  "metadata": { ... }
+}
+```
+
+**翻译任务响应** (`task: "translate"`):
+```json
+{
+  "request_id": "req_1704067200123456",
+  "status": "success",
+  "transcription": "这是转录的文本内容",
+  "translations": {
+    "en": "This is the transcribed text content",
+    "ja": "これは転写されたテキストの内容です"
+  },
+  "raw_response": "原文: 这是转录的文本内容\n英文: This is...",
+  "processing_time": 2.345,
+  "metadata": { ... }
+}
+```
 
 ### 5. 处理状态查询
 
@@ -423,16 +489,22 @@ curl -X GET \
 
 ### 任务类型
 
-- **transcribe**: 仅转录，返回原始语言文本
-- **translate**: 转录+翻译，返回原始文本和指定语言的翻译
+- **transcribe**: 仅转录，将音频内容转录成其原始语言的文本，不进行翻译
+- **translate**: 转录+翻译，首先转录音频内容，然后翻译成指定的目标语言
 
 ### 语言代码
 
 使用标准的语言代码：
-- `en`: 英文
-- `ja`: 日文  
 - `zh`: 简体中文
 - `zh-hant`: 繁体中文
+- `en`: 英文
+- `ja`: 日文
+- `ko`: 韩文
+- `es`: 西班牙语
+- `fr`: 法语
+- `de`: 德语
+- `ru`: 俄语
+- `it`: 意大利语
 
 ### 频率限制
 
@@ -477,12 +549,14 @@ async function processAudio(audioFilePath, audioFormat, task, targetLanguages = 
 // 使用示例
 async function example() {
   try {
-    // 转录任务
+    // 转录任务 - 仅转录，不翻译
     const transcribeResult = await processAudio('audio.wav', 'wav', 'transcribe');
     console.log('转录结果:', transcribeResult.transcription);
+    console.log('翻译结果:', transcribeResult.translations); // 空对象 {}
 
-    // 翻译任务
+    // 翻译任务 - 转录+翻译
     const translateResult = await processAudio('audio.wav', 'wav', 'translate', ['en', 'ja']);
+    console.log('转录结果:', translateResult.transcription);
     console.log('翻译结果:', translateResult.translations);
   } catch (error) {
     console.error('处理失败:', error.response?.data || error.message);
@@ -537,12 +611,14 @@ def process_audio(audio_file_path, audio_format, task, target_languages=None):
 # 使用示例
 if __name__ == '__main__':
     try:
-        # 转录任务
+        # 转录任务 - 仅转录，不翻译
         transcribe_result = process_audio('audio.wav', 'wav', 'transcribe')
         print(f"转录结果: {transcribe_result['transcription']}")
+        print(f"翻译结果: {transcribe_result['translations']}")  # 空字典 {}
 
-        # 翻译任务
+        # 翻译任务 - 转录+翻译
         translate_result = process_audio('audio.wav', 'wav', 'translate', ['en', 'ja'])
+        print(f"转录结果: {translate_result['transcription']}")
         print(f"翻译结果: {translate_result['translations']}")
 
     except requests.exceptions.RequestException as e:
@@ -570,7 +646,7 @@ audio_to_base64() {
     fi
 }
 
-# 转录任务
+# 转录任务 - 仅转录，不翻译
 echo "=== 转录测试 ==="
 AUDIO_BASE64=$(audio_to_base64 "test.wav")
 if [[ $? -eq 0 ]]; then
@@ -585,7 +661,7 @@ if [[ $? -eq 0 ]]; then
       "$BASE_URL/process" | jq .
 fi
 
-# 翻译任务
+# 翻译任务 - 转录+翻译
 echo "=== 翻译测试 ==="
 if [[ $? -eq 0 ]]; then
     curl -X POST \
@@ -649,7 +725,18 @@ curl -X GET \
 
 ## 更新日志
 
-### v1.0.0 (当前版本)
+### v1.1.0 (当前版本)
+
+- **任务类型优化**: 明确区分 `transcribe` (仅转录) 和 `translate` (转录+翻译) 任务
+- **语言支持扩展**: 新增支持韩文、西班牙语、法语、德语、俄语、意大利语
+- **API端点统一**: 统一使用 `/process` 端点，支持JSON格式请求
+- **响应格式优化**:
+  - `transcribe` 任务返回空的 `translations` 对象
+  - `translate` 任务返回完整的转录和翻译结果
+- **语言代码标准化**: 使用标准语言代码 (如 `zh`, `en`, `ja` 等)
+- **提示词引擎优化**: 服务端控制提示词生成，提高一致性
+
+### v1.0.0
 
 - 初始API版本
 - 支持音频转录和翻译

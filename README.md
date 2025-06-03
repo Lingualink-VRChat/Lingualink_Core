@@ -161,27 +161,21 @@ GET /api/v1/health
 #### 音频处理
 ```bash
 POST /api/v1/process
-Content-Type: multipart/form-data
-
-# 表单参数：
-# - audio: 音频文件
-# - task: 任务类型 (transcribe/translate/both)
-# - target_languages: 目标语言列表
-# - template: 提示词模板名称
-# - user_prompt: 自定义用户提示词
-```
-
-#### JSON 音频处理
-```bash
-POST /api/v1/process/json
 Content-Type: application/json
 
+# 转录任务 (仅转录，不翻译)
 {
   "audio": "base64-encoded-audio-data",
   "audio_format": "wav",
-  "task": "both",
-  "target_languages": ["英文", "日文"],
-  "user_prompt": "请准确转录并翻译"
+  "task": "transcribe"
+}
+
+# 翻译任务 (转录+翻译)
+{
+  "audio": "base64-encoded-audio-data",
+  "audio_format": "wav",
+  "task": "translate",
+  "target_languages": ["en", "ja"]
 }
 ```
 
@@ -197,14 +191,30 @@ GET /api/v1/languages
 
 ### 响应格式
 
+**转录任务响应** (`task: "transcribe"`):
+```json
+{
+  "request_id": "req_1234567890",
+  "status": "success",
+  "transcription": "原文转录内容",
+  "translations": {},
+  "processing_time": 1.5,
+  "metadata": {
+    "model": "qwen2.5-32b-instruct",
+    "backend": "default"
+  }
+}
+```
+
+**翻译任务响应** (`task: "translate"`):
 ```json
 {
   "request_id": "req_1234567890",
   "status": "success",
   "transcription": "原文转录内容",
   "translations": {
-    "英文": "English translation",
-    "日文": "日本語翻訳"
+    "en": "English translation",
+    "ja": "日本語翻訳"
   },
   "processing_time": 2.5,
   "metadata": {
@@ -253,14 +263,15 @@ backends:
 ```yaml
 prompt:
   defaults:
-    task: both
-    target_languages: ["英文", "日文", "中文"]
-    template: default
+    task: translate
+    target_languages: ["en", "ja", "zh"]
   languages:
     - code: zh
       names:
         display: "中文"
-      aliases: ["chinese", "中文", "汉语"]
+        english: "Chinese"
+        native: "中文"
+      aliases: ["chinese", "中文", "汉语", "zh-cn"]
 ```
 
 ## 🎯 支持的功能
@@ -274,17 +285,19 @@ prompt:
 
 ### 语言支持
 - 中文 (zh)
+- 繁体中文 (zh-hant)
 - 英文 (en)
 - 日文 (ja)
 - 韩文 (ko)
 - 西班牙语 (es)
 - 法语 (fr)
 - 德语 (de)
+- 俄语 (ru)
+- 意大利语 (it)
 
 ### 任务类型
-- `transcribe`: 仅转录
-- `translate`: 仅翻译
-- `both`: 转录+翻译
+- `transcribe`: 仅转录，将音频内容转录成其原始语言的文本，不进行翻译
+- `translate`: 转录+翻译，首先转录音频内容，然后翻译成指定的目标语言
 
 ### LLM 后端
 - OpenAI Compatible API
