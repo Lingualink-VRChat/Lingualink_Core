@@ -117,7 +117,8 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 
 	// 4. 处理目标语言（使用短代码）
 	targetLangCodes := req.TargetLanguages
-	if len(targetLangCodes) == 0 {
+	// 只有在translate任务且没有指定目标语言时，才使用默认目标语言
+	if req.Task == prompt.TaskTranslate && len(targetLangCodes) == 0 {
 		targetLangCodes = p.config.Defaults.TargetLanguages // 从配置获取默认目标语言
 	}
 

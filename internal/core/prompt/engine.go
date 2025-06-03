@@ -203,9 +203,14 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 	}
 
 	// 将短代码转换为中文显示名称用于构建LLM prompt
-	targetLanguageNames, err := e.convertCodesToDisplayNames(req.TargetLanguages)
-	if err != nil {
-		return nil, fmt.Errorf("convert target language codes: %w", err)
+	// 对于transcribe任务，不需要目标语言
+	var targetLanguageNames []string
+	var err error
+	if req.Task == TaskTranslate && len(req.TargetLanguages) > 0 {
+		targetLanguageNames, err = e.convertCodesToDisplayNames(req.TargetLanguages)
+		if err != nil {
+			return nil, fmt.Errorf("convert target language codes: %w", err)
+		}
 	}
 
 	// 准备模板数据
@@ -347,6 +352,11 @@ func (e *Engine) convertCodesToDisplayNames(codes []string) ([]string, error) {
 // normalizeLanguage 标准化单个语言（输入可以是代码或别名）
 func (e *Engine) normalizeLanguage(input string) (string, error) {
 	input = strings.TrimSpace(strings.ToLower(input))
+
+	// 检查空字符串
+	if input == "" {
+		return "", fmt.Errorf("unknown language: %s", input)
+	}
 
 	// 直接匹配语言代码
 	if lang, ok := e.languages[input]; ok {
