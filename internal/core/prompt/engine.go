@@ -16,9 +16,9 @@ import (
 type TaskType string
 
 const (
-	TaskTranslate TaskType = "translate"
+	TaskTranslate  TaskType = "translate"
+	TaskTranscribe TaskType = "transcribe"
 	// 保留用于后续扩展
-	// TaskTranscribe TaskType = "transcribe"
 	// TaskBoth       TaskType = "both"
 )
 
@@ -132,6 +132,12 @@ func (e *Engine) loadDefaultTemplate() error {
 		Version:     "1.0",
 		Description: "默认音频处理模板",
 		SystemPrompt: `你是一个高级的语音处理助手。你的任务是：
+{{- if eq .Task "transcribe" }}
+1. 将音频内容转录成其原始语言的文本。
+
+请按照以下格式清晰地组织你的输出：
+原文:
+{{- else if eq .Task "translate" }}
 1. 首先将音频内容转录成其原始语言的文本。
 {{- range $index, $langName := .TargetLanguageNames }}
 {{ add $index 2 }}. 将文本翻译成{{ $langName }}。
@@ -141,6 +147,7 @@ func (e *Engine) loadDefaultTemplate() error {
 原文:
 {{- range .TargetLanguageNames }}
 {{ . }}:
+{{- end }}
 {{- end }}`,
 		UserPrompt: `请处理下面的音频内容。`, // 固定用户提示词，不允许客户端修改
 		OutputRules: OutputRules{
@@ -244,7 +251,7 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 	}
 
 	// 动态生成OutputRules，使用配置文件中的完整别名列表
-	dynamicOutputRules := e.buildDynamicOutputRules(req.TargetLanguages)
+	dynamicOutputRules := e.buildDynamicOutputRules(req.Task, req.TargetLanguages)
 
 	return &Prompt{
 		System:      systemBuf.String(),
@@ -253,8 +260,8 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 	}, nil
 }
 
-// buildDynamicOutputRules 根据目标语言动态构建OutputRules
-func (e *Engine) buildDynamicOutputRules(targetLanguageCodes []string) OutputRules {
+// buildDynamicOutputRules 根据任务类型和目标语言动态构建OutputRules
+func (e *Engine) buildDynamicOutputRules(task TaskType, targetLanguageCodes []string) OutputRules {
 	sections := []OutputSection{
 		{
 			Key:      "原文",
@@ -264,43 +271,46 @@ func (e *Engine) buildDynamicOutputRules(targetLanguageCodes []string) OutputRul
 		},
 	}
 
-	// 为每个目标语言动态创建OutputSection
-	for i, langCode := range targetLanguageCodes {
-		if lang, ok := e.languages[langCode]; ok {
-			// 构建别名列表：包括display名称和所有配置的别名
-			aliases := make([]string, 0)
+	// 只有在translate任务时才添加目标语言的OutputSection
+	if task == TaskTranslate {
+		// 为每个目标语言动态创建OutputSection
+		for i, langCode := range targetLanguageCodes {
+			if lang, ok := e.languages[langCode]; ok {
+				// 构建别名列表：包括display名称和所有配置的别名
+				aliases := make([]string, 0)
 
-			// 添加所有names中的值作为别名
-			for _, name := range lang.Names {
-				if name != "" {
-					aliases = append(aliases, name)
+				// 添加所有names中的值作为别名
+				for _, name := range lang.Names {
+					if name != "" {
+						aliases = append(aliases, name)
+					}
 				}
+
+				// 添加配置文件中的所有别名
+				aliases = append(aliases, lang.Aliases...)
+
+				// 添加语言代码本身作为别名
+				aliases = append(aliases, lang.Code)
+				aliases = append(aliases, strings.ToUpper(lang.Code))
+
+				// 获取主要显示名称作为Key
+				key := lang.Names["display"]
+				if key == "" {
+					key = lang.Code // 回退到代码
+				}
+
+				section := OutputSection{
+					Key:          key,
+					Aliases:      aliases,
+					LanguageCode: lang.Code,
+					Required:     false,
+					Order:        i + 2, // 从2开始，因为"原文"是1
+				}
+
+				sections = append(sections, section)
+			} else {
+				e.logger.Warnf("Language definition not found for code: %s", langCode)
 			}
-
-			// 添加配置文件中的所有别名
-			aliases = append(aliases, lang.Aliases...)
-
-			// 添加语言代码本身作为别名
-			aliases = append(aliases, lang.Code)
-			aliases = append(aliases, strings.ToUpper(lang.Code))
-
-			// 获取主要显示名称作为Key
-			key := lang.Names["display"]
-			if key == "" {
-				key = lang.Code // 回退到代码
-			}
-
-			section := OutputSection{
-				Key:          key,
-				Aliases:      aliases,
-				LanguageCode: lang.Code,
-				Required:     false,
-				Order:        i + 2, // 从2开始，因为"原文"是1
-			}
-
-			sections = append(sections, section)
-		} else {
-			e.logger.Warnf("Language definition not found for code: %s", langCode)
 		}
 	}
 

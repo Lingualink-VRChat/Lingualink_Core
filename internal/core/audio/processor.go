@@ -266,9 +266,9 @@ func (p *Processor) validateRequest(req ProcessRequest) error {
 
 	// 验证任务类型
 	validTasks := map[prompt.TaskType]bool{
-		prompt.TaskTranslate: true,
+		prompt.TaskTranslate:  true,
+		prompt.TaskTranscribe: true,
 		// 保留用于后续扩展
-		// prompt.TaskTranscribe: true,
 		// prompt.TaskTranscribeAndTranslate: true,
 	}
 
@@ -337,7 +337,7 @@ func (p *Processor) GetCapabilities() map[string]interface{} {
 	capabilities := map[string]interface{}{
 		"supported_formats":   p.GetSupportedFormats(),
 		"max_audio_size":      32 * 1024 * 1024, // 32MB
-		"supported_tasks":     []string{"translate"},
+		"supported_tasks":     []string{"translate", "transcribe"},
 		"supported_languages": languageCodes,
 		"audio_conversion":    p.audioConverter.IsFFmpegAvailable(),
 	}
