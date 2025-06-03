@@ -22,6 +22,19 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 echo "🎵 Lingualink Core 音频处理测试"
 echo "================================="
 
+# 检查依赖工具
+log_info "检查依赖工具..."· 
+if ! command -v jq &> /dev/null; then
+    log_error "jq 未安装，请先安装: sudo apt-get install jq 或 brew install jq"
+    exit 1
+fi
+
+if ! command -v base64 &> /dev/null; then
+    log_error "base64 未安装，请检查系统环境"
+    exit 1
+fi
+log_success "依赖工具检查完成"
+
 # 检查服务状态
 log_info "检查服务状态..."
 if ! curl -s -f "$BASE_URL/api/v1/health" > /dev/null; then
@@ -90,22 +103,31 @@ test_audio_processing() {
         return 1
     fi
 
-    # 构建JSON请求体
-    local json_data
+    # 构建JSON请求体 - 使用临时文件避免命令行参数过长
+    local temp_json=$(mktemp)
+    local temp_audio=$(mktemp)
+
+    # 将base64数据写入临时文件
+    echo -n "$audio_base64" > "$temp_audio"
+
     if [[ "$task" == "transcribe" ]]; then
-        json_data=$(jq -n \
-            --arg audio "$audio_base64" \
+        # 构建转录任务的JSON
+        jq -n \
             --arg format "$format" \
             --arg task "$task" \
+            --rawfile audio "$temp_audio" \
             '{
                 audio: $audio,
                 audio_format: $format,
                 task: $task
-            }')
+            }' > "$temp_json"
     else
         # translate任务，需要处理target_languages
         local lang_array
-        if [[ "$languages" == *","* ]]; then
+        if [[ -z "$languages" ]]; then
+            # 如果没有指定语言，使用空数组
+            lang_array="[]"
+        elif [[ "$languages" == *","* ]]; then
             # 多个语言，用逗号分隔
             IFS=',' read -ra LANG_ARRAY <<< "$languages"
             lang_array=$(printf '%s\n' "${LANG_ARRAY[@]}" | jq -R . | jq -s .)
@@ -114,24 +136,28 @@ test_audio_processing() {
             lang_array=$(jq -n --arg lang "$languages" '[$lang]')
         fi
 
-        json_data=$(jq -n \
-            --arg audio "$audio_base64" \
+        # 构建翻译任务的JSON
+        jq -n \
             --arg format "$format" \
             --arg task "$task" \
             --argjson target_languages "$lang_array" \
+            --rawfile audio "$temp_audio" \
             '{
                 audio: $audio,
                 audio_format: $format,
                 task: $task,
                 target_languages: $target_languages
-            }')
+            }' > "$temp_json"
     fi
 
     response=$(curl -s -w "\nHTTP_CODE:%{http_code}\nTIME:%{time_total}" \
         -H "X-API-Key: $API_KEY" \
         -H "Content-Type: application/json" \
-        -d "$json_data" \
+        -d @"$temp_json" \
         "$BASE_URL/api/v1/process")
+
+    # 清理临时文件
+    rm -f "$temp_json" "$temp_audio"
     
     http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
     time_total=$(echo "$response" | grep "TIME:" | cut -d: -f2)

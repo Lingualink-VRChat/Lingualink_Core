@@ -44,6 +44,7 @@ logs/
 config/config.yaml
 config/api_keys.json
 test_audio_local.sh
+test_large_audio.sh
 .env
 .env.local
 .env.*.local
