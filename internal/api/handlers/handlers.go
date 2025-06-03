@@ -2,9 +2,7 @@ package handlers
 
 import (
 	"encoding/base64"
-	"io"
 	"net/http"
-	"strings"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
@@ -35,100 +33,6 @@ func NewHandler(
 		logger:         logger,
 		metrics:        metrics,
 	}
-}
-
-// ProcessAudio 处理音频API
-func (h *Handler) ProcessAudio(c *gin.Context) {
-	// 获取认证信息
-	identity, exists := c.Get("identity")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
-
-	userIdentity := identity.(*auth.Identity)
-	h.logger.WithField("user_id", userIdentity.ID).Info("Processing audio request")
-
-	// 解析multipart表单
-	err := c.Request.ParseMultipartForm(32 << 20) // 32MB限制
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse form"})
-		return
-	}
-
-	// 获取音频文件
-	file, header, err := c.Request.FormFile("audio")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "audio file is required"})
-		return
-	}
-	defer file.Close()
-
-	// 读取音频数据
-	audioData, err := io.ReadAll(file)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read audio file"})
-		return
-	}
-
-	// 获取音频格式（从文件扩展名或表单参数）
-	audioFormat := c.PostForm("format")
-	if audioFormat == "" {
-		audioFormat = getFormatFromFilename(header.Filename)
-	}
-
-	// 获取处理参数
-	task := prompt.TaskType(c.DefaultPostForm("task", "translate"))
-	sourceLanguage := c.PostForm("source_language")
-
-	// 修复目标语言解析 - 支持逗号分隔的字符串（期望短代码）
-	targetLanguagesStr := c.PostForm("target_languages")
-	var targetLanguages []string
-	if targetLanguagesStr != "" {
-		// 检查是否是逗号分隔的字符串
-		if strings.Contains(targetLanguagesStr, ",") {
-			for _, lang := range strings.Split(targetLanguagesStr, ",") {
-				trimmed := strings.TrimSpace(lang)
-				if trimmed != "" {
-					targetLanguages = append(targetLanguages, trimmed)
-				}
-			}
-		} else {
-			targetLanguages = append(targetLanguages, targetLanguagesStr)
-		}
-	} else {
-		// 尝试获取数组形式
-		targetLanguages = c.PostFormArray("target_languages")
-	}
-
-	// 移除template处理，使用硬编码的默认模板
-	// 移除 user_prompt 的处理，改为服务端控制
-
-	// 构建处理请求
-	req := audio.ProcessRequest{
-		Audio:           audioData,
-		AudioFormat:     audioFormat,
-		Task:            task,
-		SourceLanguage:  sourceLanguage,
-		TargetLanguages: targetLanguages,
-		// 移除Template和UserPrompt字段
-	}
-
-	// 处理音频
-	resp, err := h.audioProcessor.Process(c.Request.Context(), req)
-	if err != nil {
-		h.logger.WithError(err).Error("Audio processing failed")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 记录成功指标
-	h.metrics.RecordCounter("api.process_audio.success", 1, map[string]string{
-		"user_id": userIdentity.ID,
-		"task":    string(task),
-	})
-
-	c.JSON(http.StatusOK, resp)
 }
 
 // HealthCheck 健康检查API
@@ -179,25 +83,6 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 }
 
 // 辅助函数
-
-// getFormatFromFilename 从文件名获取格式
-func getFormatFromFilename(filename string) string {
-	if len(filename) < 4 {
-		return "wav" // 默认格式
-	}
-
-	ext := filename[len(filename)-3:]
-	switch ext {
-	case "wav", "mp3", "m4a":
-		return ext
-	case "pus": // opus
-		return "opus"
-	case "lac": // flac
-		return "flac"
-	default:
-		return "wav"
-	}
-}
 
 // getCurrentTimestamp 获取当前时间戳
 func getCurrentTimestamp() int64 {
@@ -260,7 +145,7 @@ func (h *Handler) ProcessAudioJSON(c *gin.Context) {
 	}
 
 	// 记录成功指标
-	h.metrics.RecordCounter("api.process_audio_json.success", 1, map[string]string{
+	h.metrics.RecordCounter("api.process_audio.success", 1, map[string]string{
 		"user_id": userIdentity.ID,
 		"task":    string(req.Task),
 	})

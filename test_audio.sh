@@ -63,25 +63,74 @@ if [[ "$wav_exists" == false && "$opus_exists" == false ]]; then
     exit 1
 fi
 
-# 测试音频处理
+# 测试音频处理 (JSON格式)
 test_audio_processing() {
     local file=$1
     local format=$2
     local task=$3
     local languages=$4
     local description=$5
-    
+
     echo
     log_info "测试: $description"
     echo "文件: $file"
     echo "任务: $task"
     echo "目标语言: $languages"
-    
+
+    # 将音频文件转换为base64
+    if [[ ! -f "$file" ]]; then
+        log_error "音频文件不存在: $file"
+        return 1
+    fi
+
+    local audio_base64
+    audio_base64=$(base64 -i "$file" 2>/dev/null | tr -d '\n')
+    if [[ $? -ne 0 ]]; then
+        log_error "无法读取音频文件: $file"
+        return 1
+    fi
+
+    # 构建JSON请求体
+    local json_data
+    if [[ "$task" == "transcribe" ]]; then
+        json_data=$(jq -n \
+            --arg audio "$audio_base64" \
+            --arg format "$format" \
+            --arg task "$task" \
+            '{
+                audio: $audio,
+                audio_format: $format,
+                task: $task
+            }')
+    else
+        # translate任务，需要处理target_languages
+        local lang_array
+        if [[ "$languages" == *","* ]]; then
+            # 多个语言，用逗号分隔
+            IFS=',' read -ra LANG_ARRAY <<< "$languages"
+            lang_array=$(printf '%s\n' "${LANG_ARRAY[@]}" | jq -R . | jq -s .)
+        else
+            # 单个语言
+            lang_array=$(jq -n --arg lang "$languages" '[$lang]')
+        fi
+
+        json_data=$(jq -n \
+            --arg audio "$audio_base64" \
+            --arg format "$format" \
+            --arg task "$task" \
+            --argjson target_languages "$lang_array" \
+            '{
+                audio: $audio,
+                audio_format: $format,
+                task: $task,
+                target_languages: $target_languages
+            }')
+    fi
+
     response=$(curl -s -w "\nHTTP_CODE:%{http_code}\nTIME:%{time_total}" \
         -H "X-API-Key: $API_KEY" \
-        -F "audio=@$file" \
-        -F "task=$task" \
-        -F "target_languages=$languages" \
+        -H "Content-Type: application/json" \
+        -d "$json_data" \
         "$BASE_URL/api/v1/process")
     
     http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
@@ -130,27 +179,37 @@ echo
 echo "🧪 开始音频处理测试"
 echo "===================="
 
-# 测试1: WAV文件转录+翻译（使用短代码）
+# 测试1: WAV文件 - 仅转录
+if [[ "$wav_exists" == true ]]; then
+    test_audio_processing "$TEST_AUDIO_WAV" "wav" "transcribe" "" "WAV文件 - 仅转录"
+fi
+
+# 测试2: OPUS文件 - 仅转录
+if [[ "$opus_exists" == true ]]; then
+    test_audio_processing "$TEST_AUDIO_OPUS" "opus" "transcribe" "" "OPUS文件 - 仅转录"
+fi
+
+# 测试3: WAV文件转录+翻译（使用短代码）
 if [[ "$wav_exists" == true ]]; then
     test_audio_processing "$TEST_AUDIO_WAV" "wav" "translate" "zh" "WAV文件 - 转录+翻译"
 fi
 
-# 测试2: OPUS文件转录+翻译（使用短代码）
+# 测试4: OPUS文件转录+翻译（使用短代码）
 if [[ "$opus_exists" == true ]]; then
     test_audio_processing "$TEST_AUDIO_OPUS" "opus" "translate" "zh" "OPUS文件 - 转录+翻译"
 fi
 
-# 测试3: 多语言翻译（使用短代码）
+# 测试5: 多语言翻译（使用短代码）
 if [[ "$wav_exists" == true ]]; then
     test_audio_processing "$TEST_AUDIO_WAV" "wav" "translate" "en,ja" "WAV文件 - 多语言翻译"
 fi
 
-# 测试4: 英文翻译（使用短代码）
+# 测试6: 英文翻译（使用短代码）
 if [[ "$opus_exists" == true ]]; then
     test_audio_processing "$TEST_AUDIO_OPUS" "opus" "translate" "en" "OPUS文件 - 英文翻译"
 fi
 
-# 测试5: 繁体中文翻译（新增测试）
+# 测试7: 繁体中文翻译（新增测试）
 if [[ "$wav_exists" == true ]]; then
     test_audio_processing "$TEST_AUDIO_WAV" "wav" "translate" "zh-hant" "WAV文件 - 繁体中文翻译"
 fi
