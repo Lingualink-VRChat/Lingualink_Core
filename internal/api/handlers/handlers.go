@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/text"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/gin-gonic/gin"
@@ -15,6 +17,7 @@ import (
 // Handler API处理器
 type Handler struct {
 	audioProcessor *audio.Processor
+	textProcessor  *text.Processor
 	authenticator  *auth.MultiAuthenticator
 	logger         *logrus.Logger
 	metrics        metrics.MetricsCollector
@@ -23,12 +26,14 @@ type Handler struct {
 // NewHandler 创建API处理器
 func NewHandler(
 	audioProcessor *audio.Processor,
+	textProcessor *text.Processor,
 	authenticator *auth.MultiAuthenticator,
 	logger *logrus.Logger,
 	metrics metrics.MetricsCollector,
 ) *Handler {
 	return &Handler{
 		audioProcessor: audioProcessor,
+		textProcessor:  textProcessor,
 		authenticator:  authenticator,
 		logger:         logger,
 		metrics:        metrics,
@@ -181,4 +186,53 @@ func (h *Handler) ListSupportedLanguages(c *gin.Context) {
 		"languages": languages,
 		"count":     len(languages),
 	})
+}
+
+// ProcessText 处理文本翻译请求
+func (h *Handler) ProcessText(c *gin.Context) {
+	// 获取认证信息
+	identity, exists := c.Get("identity")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	userIdentity := identity.(*auth.Identity)
+	h.logger.WithField("user_id", userIdentity.ID).Info("Processing text translation request")
+
+	var req struct {
+		Text            string                 `json:"text"`
+		SourceLanguage  string                 `json:"source_language,omitempty"`
+		TargetLanguages []string               `json:"target_languages"`
+		Options         map[string]interface{} `json:"options,omitempty"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON"})
+		return
+	}
+
+	// 构建处理请求
+	processReq := text.ProcessRequest{
+		Text:            req.Text,
+		SourceLanguage:  req.SourceLanguage,
+		TargetLanguages: req.TargetLanguages,
+		Options:         req.Options,
+	}
+
+	// 处理文本
+	resp, err := h.textProcessor.Process(c.Request.Context(), processReq)
+	if err != nil {
+		h.logger.WithError(err).Error("Text processing failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 记录成功指标
+	h.metrics.RecordCounter("api.process_text.success", 1, map[string]string{
+		"user_id":      userIdentity.ID,
+		"target_count": fmt.Sprintf("%d", len(req.TargetLanguages)),
+	})
+
+	c.JSON(http.StatusOK, resp)
 }

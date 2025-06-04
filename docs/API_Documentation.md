@@ -200,15 +200,16 @@ curl -X GET \
 
 使用 JSON 格式处理 base64 编码的音频数据。
 
-**端点**: `POST /process`
+**端点**: `POST /process_audio`
 **认证**: 需要
-**权限**: `audio.process`, `audio.transcribe`, `audio.translate`
+**权限**: `audio.process`, `audio.translate`
 **内容类型**: `application/json`
 
 #### 任务类型说明
 
-- **`transcribe`**: 仅转录任务，将音频内容转录成其原始语言的文本，不进行翻译
 - **`translate`**: 转录+翻译任务，首先转录音频内容，然后翻译成指定的目标语言
+
+注意：已移除 `transcribe` 任务类型，现在只支持 `translate` 任务。
 
 #### 请求体
 
@@ -216,7 +217,7 @@ curl -X GET \
 {
   "audio": "base64-encoded-audio-data",
   "audio_format": "wav",
-  "task": "transcribe",
+  "task": "translate",
   "source_language": "zh",
   "target_languages": ["en", "ja"],
   "options": {}
@@ -229,25 +230,12 @@ curl -X GET \
 |------|------|------|------|
 | `audio` | string | 是 | Base64编码的音频数据 |
 | `audio_format` | string | 是 | 音频格式 (wav, mp3, m4a, opus, flac) |
-| `task` | string | 是 | 任务类型: `transcribe` (仅转录) 或 `translate` (转录+翻译) |
+| `task` | string | 是 | 任务类型: `translate` (转录+翻译) |
 | `source_language` | string | 否 | 源语言代码，通常由系统自动检测 |
-| `target_languages` | array | 否 | 目标语言代码数组，仅在 `translate` 任务时需要 |
+| `target_languages` | array | 是 | 目标语言代码数组 |
 | `options` | object | 否 | 额外选项，预留字段 |
 
 #### 请求示例
-
-**转录任务** (仅转录，不翻译):
-```bash
-curl -X POST \
-  -H "X-API-Key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "audio": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA...",
-    "audio_format": "wav",
-    "task": "transcribe"
-  }' \
-  "http://localhost:8080/api/v1/process"
-```
 
 **翻译任务** (转录+翻译):
 ```bash
@@ -260,7 +248,7 @@ curl -X POST \
     "task": "translate",
     "target_languages": ["en", "ja"]
   }' \
-  "http://localhost:8080/api/v1/process"
+  "http://localhost:8080/api/v1/process_audio"
 ```
 
 ### 音频处理响应格式
@@ -286,6 +274,70 @@ curl -X POST \
     "original_format": "wav",
     "processed_format": "wav",
     "conversion_applied": false
+  }
+}
+```
+
+### 5. 文本翻译
+
+处理纯文本翻译请求。
+
+**端点**: `POST /process_text`
+**认证**: 需要
+**权限**: `text.process`, `text.translate`
+**内容类型**: `application/json`
+
+#### 请求体
+
+```json
+{
+  "text": "这是需要翻译的文本",
+  "source_language": "zh",
+  "target_languages": ["en", "ja"],
+  "options": {}
+}
+```
+
+#### 请求参数说明
+
+| 字段 | 类型 | 必需 | 描述 |
+|------|------|------|------|
+| `text` | string | 是 | 需要翻译的文本内容 |
+| `source_language` | string | 否 | 源语言代码，通常由系统自动检测 |
+| `target_languages` | array | 是 | 目标语言代码数组 |
+| `options` | object | 否 | 额外选项，预留字段 |
+
+#### 请求示例
+
+```bash
+curl -X POST \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "这是需要翻译的文本",
+    "target_languages": ["en", "ja"]
+  }' \
+  "http://localhost:8080/api/v1/process_text"
+```
+
+#### 文本翻译响应格式
+
+```json
+{
+  "request_id": "txt_1704067200123456",
+  "status": "success",
+  "source_text": "这是需要翻译的文本",
+  "translations": {
+    "en": "This is the text to be translated",
+    "ja": "これは翻訳されるテキストです"
+  },
+  "raw_response": "英文: This is the text to be translated\n日文: これは翻訳されるテキストです",
+  "processing_time": 1.234,
+  "metadata": {
+    "model": "gpt-4",
+    "prompt_tokens": 80,
+    "total_tokens": 120,
+    "backend": "openai"
   }
 }
 ```

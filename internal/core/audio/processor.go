@@ -267,8 +267,8 @@ func (p *Processor) validateRequest(req ProcessRequest) error {
 
 	// 验证任务类型
 	validTasks := map[prompt.TaskType]bool{
-		prompt.TaskTranslate:  true,
-		prompt.TaskTranscribe: true,
+		prompt.TaskTranslate: true,
+		// 移除 TaskTranscribe，只保留 translate 任务
 		// 保留用于后续扩展
 		// prompt.TaskTranscribeAndTranslate: true,
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/text"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/gin-gonic/gin"
@@ -49,6 +50,7 @@ func main() {
 	}
 
 	audioProcessor := audio.NewProcessor(llmManager, promptEngine, cfg.Prompt, logger, metricsCollector)
+	textProcessor := text.NewProcessor(llmManager, promptEngine, metricsCollector, cfg.Prompt, logger)
 
 	// 注册认证策略
 	for _, strategy := range cfg.Auth.Strategies {
@@ -68,7 +70,7 @@ func main() {
 	}
 
 	// 设置路由
-	router := setupRouter(authenticator, audioProcessor, metricsCollector, logger)
+	router := setupRouter(authenticator, audioProcessor, textProcessor, metricsCollector, logger)
 
 	// 创建HTTP服务器
 	server := &http.Server{
@@ -103,7 +105,7 @@ func main() {
 }
 
 // setupRouter 设置路由
-func setupRouter(authenticator *auth.MultiAuthenticator, audioProcessor *audio.Processor, metricsCollector metrics.MetricsCollector, logger *logrus.Logger) *gin.Engine {
+func setupRouter(authenticator *auth.MultiAuthenticator, audioProcessor *audio.Processor, textProcessor *text.Processor, metricsCollector metrics.MetricsCollector, logger *logrus.Logger) *gin.Engine {
 	// 创建Gin引擎
 	router := gin.New()
 
@@ -115,7 +117,7 @@ func setupRouter(authenticator *auth.MultiAuthenticator, audioProcessor *audio.P
 	router.Use(middleware.Recovery(logger))
 
 	// 创建处理器
-	handler := handlers.NewHandler(audioProcessor, authenticator, logger, metricsCollector)
+	handler := handlers.NewHandler(audioProcessor, textProcessor, authenticator, logger, metricsCollector)
 
 	// 注册路由
 	routes.RegisterRoutes(router, handler, authenticator)

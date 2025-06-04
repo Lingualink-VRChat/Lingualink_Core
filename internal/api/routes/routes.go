@@ -21,8 +21,11 @@ func RegisterRoutes(router *gin.Engine, handler *handlers.Handler, authenticator
 	protected := router.Group("/api/v1")
 	protected.Use(middleware.Auth(authenticator))
 	{
-		// 音频处理 - 统一使用JSON格式
-		protected.POST("/process", handler.ProcessAudioJSON)
+		// 音频处理 - 重命名为 process_audio
+		protected.POST("/process_audio", handler.ProcessAudioJSON)
+
+		// 文本处理 - 新增 process_text 端点
+		protected.POST("/process_text", handler.ProcessText)
 
 		// 异步处理状态查询
 		protected.GET("/status/:request_id", handler.GetProcessingStatus)
