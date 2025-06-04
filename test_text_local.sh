@@ -181,6 +181,37 @@ test_text_translation "" "en" "空文本错误测试"
 # 测试10: 无目标语言错误测试
 test_text_translation "这是一个错误测试。" "" "无目标语言错误测试"
 
+# 测试11: 音频转录功能验证（通过process_audio端点）
+echo
+echo "🎵 音频处理端点功能验证"
+echo "========================"
+log_info "验证 /process_audio 端点的 transcribe 和 translate 功能"
+
+# 注意：这里只是展示API调用格式，实际需要真实的音频数据
+echo "转录任务示例："
+echo 'curl -X POST \'
+echo '  -H "X-API-Key: your-api-key" \'
+echo '  -H "Content-Type: application/json" \'
+echo '  -d '"'"'{'
+echo '    "audio": "base64-audio-data",'
+echo '    "audio_format": "wav",'
+echo '    "task": "transcribe"'
+echo '  }'"'"' \'
+echo '  "http://localhost:8080/api/v1/process_audio"'
+
+echo
+echo "翻译任务示例："
+echo 'curl -X POST \'
+echo '  -H "X-API-Key: your-api-key" \'
+echo '  -H "Content-Type: application/json" \'
+echo '  -d '"'"'{'
+echo '    "audio": "base64-audio-data",'
+echo '    "audio_format": "wav",'
+echo '    "task": "translate",'
+echo '    "target_languages": ["en", "ja"]'
+echo '  }'"'"' \'
+echo '  "http://localhost:8080/api/v1/process_audio"'
+
 echo
 echo "📊 测试总结"
 echo "==========="
