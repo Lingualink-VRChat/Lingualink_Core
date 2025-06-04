@@ -14,9 +14,9 @@ import (
 
 // ProcessRequest 文本处理请求
 type ProcessRequest struct {
-	Text            string   `json:"text"`
-	SourceLanguage  string   `json:"source_language,omitempty"`
-	TargetLanguages []string `json:"target_languages"`
+	Text            string                 `json:"text"`
+	SourceLanguage  string                 `json:"source_language,omitempty"`
+	TargetLanguages []string               `json:"target_languages"`
 	Options         map[string]interface{} `json:"options,omitempty"`
 }
 
@@ -71,9 +71,9 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 	}()
 
 	p.logger.WithFields(logrus.Fields{
-		"request_id":     requestID,
-		"text_length":    len(req.Text),
-		"target_count":   len(req.TargetLanguages),
+		"request_id":   requestID,
+		"text_length":  len(req.Text),
+		"target_count": len(req.TargetLanguages),
 	}).Info("Processing text translation request")
 
 	// 1. 验证请求
@@ -180,8 +180,8 @@ func (p *Processor) validateRequest(req ProcessRequest) error {
 		return fmt.Errorf("text is required")
 	}
 
-	// 验证文本长度限制（10000字符）
-	maxLength := 10000
+	// 验证文本长度限制（3000字符）
+	maxLength := 3000
 	if len(req.Text) > maxLength {
 		return fmt.Errorf("text length (%d characters) exceeds maximum allowed length (%d characters)", len(req.Text), maxLength)
 	}
@@ -201,7 +201,7 @@ func generateRequestID() string {
 // GetCapabilities 获取文本处理能力
 func (p *Processor) GetCapabilities() map[string]interface{} {
 	return map[string]interface{}{
-		"max_text_length":     10000,
+		"max_text_length":     3000,
 		"supported_languages": p.promptEngine.GetLanguages(),
 		"features": []string{
 			"text_translation",

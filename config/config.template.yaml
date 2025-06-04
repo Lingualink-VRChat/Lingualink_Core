@@ -98,7 +98,7 @@ prompt:
     validation:
       required_sections: []
       min_content_length: 1
-      max_content_length: 10000
+      max_content_length: 3000
 
 # 日志配置
 logging:

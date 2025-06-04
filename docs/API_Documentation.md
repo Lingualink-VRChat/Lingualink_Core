@@ -120,7 +120,7 @@ curl -X GET \
     }
   },
   "text_processing": {
-    "max_text_length": 10000,
+    "max_text_length": 3000,
     "supported_tasks": ["translate"],
     "features": [
       "text_translation",
@@ -569,7 +569,7 @@ curl -X GET \
 
 ```json
 {
-  "error": "text length (15000 characters) exceeds maximum allowed length (10000 characters)"
+  "error": "text length (15000 characters) exceeds maximum allowed length (3000 characters)"
 }
 ```
 

@@ -260,7 +260,7 @@ text_result = process_text('你好世界', ['en', 'ja'])
 
 ```json
 {
-  "error": "text length (15000 characters) exceeds maximum allowed length (10000 characters)"
+  "error": "text length (15000 characters) exceeds maximum allowed length (3000 characters)"
 }
 ```
 
