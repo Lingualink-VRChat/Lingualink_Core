@@ -218,7 +218,7 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 
 	// 如果没有找到预期的段落，尝试从原始响应中提取
 	if response.Transcription == "" && len(response.Translations) == 0 && err != nil {
-		p.extractFromRawResponse(response, llmResp.Content)
+		p.extractFromRawResponse(response, llmResp.Content, targetLangCodes)
 	}
 
 	// 记录成功指标
@@ -281,8 +281,8 @@ func (p *Processor) validateRequest(req ProcessRequest) error {
 }
 
 // extractFromRawResponse 从原始响应中提取内容
-func (p *Processor) extractFromRawResponse(response *ProcessResponse, rawContent string) {
-	// 简单的回退逻辑：如果解析失败，将整个响应作为转录
+func (p *Processor) extractFromRawResponse(response *ProcessResponse, rawContent string, targetLangCodes []string) {
+	// 增强的回退逻辑：如果解析失败，将整个响应作为转录
 	if response.Transcription == "" {
 		response.Transcription = rawContent
 		response.Status = "partial_success"
@@ -291,6 +291,12 @@ func (p *Processor) extractFromRawResponse(response *ProcessResponse, rawContent
 			response.Metadata = make(map[string]interface{})
 		}
 		response.Metadata["fallback_mode"] = true
+		response.Metadata["fallback_reason"] = "Failed to parse structured response, using raw content as transcription"
+
+		p.logger.WithFields(logrus.Fields{
+			"content_length":   len(rawContent),
+			"target_languages": targetLangCodes,
+		}).Info("Applied fallback: using raw response as transcription")
 	}
 }
 

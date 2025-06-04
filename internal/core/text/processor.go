@@ -3,6 +3,7 @@ package text
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
@@ -166,6 +167,11 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		}
 	}
 
+	// 8. 回退机制：如果没有找到任何翻译结果且解析失败，尝试将原始响应作为目标语言的翻译
+	if len(response.Translations) == 0 && err != nil {
+		p.extractFromRawResponse(response, llmResp.Content, targetLangCodes)
+	}
+
 	// 记录成功指标
 	p.metrics.RecordCounter("text.process.success", 1, map[string]string{
 		"target_count": fmt.Sprintf("%d", len(targetLangCodes)),
@@ -191,6 +197,32 @@ func (p *Processor) validateRequest(req ProcessRequest) error {
 	}
 
 	return nil
+}
+
+// extractFromRawResponse 从原始响应中提取翻译内容
+func (p *Processor) extractFromRawResponse(response *ProcessResponse, rawContent string, targetLangCodes []string) {
+	// 回退逻辑：当LLM直接返回翻译结果而不是结构化格式时
+	// 将整个响应作为第一个目标语言的翻译结果
+	if len(targetLangCodes) > 0 {
+		// 清理原始响应内容
+		cleanContent := strings.TrimSpace(rawContent)
+		if cleanContent != "" {
+			// 将原始响应作为第一个目标语言的翻译
+			response.Translations[targetLangCodes[0]] = cleanContent
+			response.Status = "partial_success"
+
+			if response.Metadata == nil {
+				response.Metadata = make(map[string]interface{})
+			}
+			response.Metadata["fallback_mode"] = true
+			response.Metadata["fallback_reason"] = "LLM returned unstructured response, using as translation for first target language"
+
+			p.logger.WithFields(logrus.Fields{
+				"target_language": targetLangCodes[0],
+				"content_length":  len(cleanContent),
+			}).Info("Applied fallback: using raw response as translation")
+		}
+	}
 }
 
 // generateRequestID 生成请求ID
