@@ -167,8 +167,11 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 		}
 	}
 
-	// 8. 回退机制：如果没有找到任何翻译结果且解析失败，尝试将原始响应作为目标语言的翻译
-	if len(response.Translations) == 0 && err != nil {
+	// 8. 回退机制：如果没有找到任何翻译结果，尝试将原始响应作为目标语言的翻译
+	// 这包括两种情况：
+	// 1. 解析失败 (err != nil)
+	// 2. 解析成功但没有找到预期的翻译结果 (len(response.Translations) == 0)
+	if len(response.Translations) == 0 {
 		p.extractFromRawResponse(response, llmResp.Content, targetLangCodes)
 	}
 
