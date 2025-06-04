@@ -170,7 +170,7 @@ func (lm *LanguageManager) IdentifyLanguageFromText(text string) (string, error)
 func (lm *LanguageManager) BuildDynamicOutputRules(task TaskType, targetLanguageCodes []string, includeSource bool) OutputRules {
 	sections := []OutputSection{}
 
-	// 如果需要包含源文本段落
+	// 如果需要包含源文本段落（音频处理总是需要，文本处理可选）
 	if includeSource {
 		sections = append(sections, OutputSection{
 			Key:      "原文",

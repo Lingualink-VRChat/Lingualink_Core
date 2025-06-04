@@ -12,8 +12,8 @@ import (
 type TaskType string
 
 const (
-	TaskTranslate TaskType = "translate"
-	// 移除 TaskTranscribe，只保留 translate 任务
+	TaskTranslate  TaskType = "translate"
+	TaskTranscribe TaskType = "transcribe"
 	// 保留用于后续扩展
 	// TaskBoth       TaskType = "both"
 )
@@ -94,14 +94,25 @@ func NewEngine(cfg config.PromptConfig, logger *logrus.Logger) (*Engine, error) 
 
 // Build 构建音频处理提示词
 func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) {
-	// 将短代码转换为中文显示名称用于构建LLM prompt
+	// 根据任务类型选择模板
+	var templateName string
 	var targetLanguageNames []string
 	var err error
-	if req.Task == TaskTranslate && len(req.TargetLanguages) > 0 {
-		targetLanguageNames, err = e.languageManager.ConvertCodesToDisplayNames(req.TargetLanguages)
-		if err != nil {
-			return nil, fmt.Errorf("convert target language codes: %w", err)
+
+	if req.Task == TaskTranscribe {
+		// 转录任务不需要目标语言
+		templateName = "audio_transcribe"
+	} else if req.Task == TaskTranslate {
+		// 翻译任务需要目标语言
+		templateName = "audio_translate"
+		if len(req.TargetLanguages) > 0 {
+			targetLanguageNames, err = e.languageManager.ConvertCodesToDisplayNames(req.TargetLanguages)
+			if err != nil {
+				return nil, fmt.Errorf("convert target language codes: %w", err)
+			}
 		}
+	} else {
+		return nil, fmt.Errorf("unsupported task type: %s", req.Task)
 	}
 
 	// 准备模板数据
@@ -113,14 +124,20 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 		"Variables":           req.Variables,
 	}
 
-	// 使用音频翻译模板
-	prompt, _, err := e.templateManager.BuildPrompt(ctx, "audio_translate", data)
+	// 使用对应的模板
+	prompt, _, err := e.templateManager.BuildPrompt(ctx, templateName, data)
 	if err != nil {
 		return nil, fmt.Errorf("build audio prompt: %w", err)
 	}
 
-	// 动态生成OutputRules，使用配置文件中的完整别名列表
-	dynamicOutputRules := e.languageManager.BuildDynamicOutputRules(req.Task, req.TargetLanguages, true)
+	// 动态生成OutputRules，音频处理总是包含源文本
+	// transcribe任务不需要翻译段落，translate任务需要
+	includeTranslations := req.Task == TaskTranslate
+	var targetCodes []string
+	if includeTranslations {
+		targetCodes = req.TargetLanguages
+	}
+	dynamicOutputRules := e.languageManager.BuildDynamicOutputRules(req.Task, targetCodes, true)
 
 	prompt.OutputRules = dynamicOutputRules
 	return prompt, nil

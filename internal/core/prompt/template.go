@@ -43,8 +43,21 @@ func NewTemplateManager(logger *logrus.Logger) *TemplateManager {
 
 // loadDefaultTemplates 加载默认模板
 func (tm *TemplateManager) loadDefaultTemplates() error {
-	// 音频处理模板
-	audioTemplate := &PromptTemplate{
+	// 音频转录模板
+	audioTranscribeTemplate := &PromptTemplate{
+		Name:        "audio_transcribe",
+		Version:     "1.0",
+		Description: "音频转录模板",
+		SystemPrompt: `你是一个高级的语音处理助手。你的任务是：
+1. 将音频内容转录成其原始语言的文本。
+
+请按照以下格式清晰地组织你的输出：
+原文:`,
+		UserPrompt: `请转录下面的音频内容。`,
+	}
+
+	// 音频翻译模板
+	audioTranslateTemplate := &PromptTemplate{
 		Name:        "audio_translate",
 		Version:     "1.0",
 		Description: "音频转录和翻译模板",
@@ -84,7 +97,8 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{ .SourceText }}`,
 	}
 
-	tm.templates["audio_translate"] = audioTemplate
+	tm.templates["audio_transcribe"] = audioTranscribeTemplate
+	tm.templates["audio_translate"] = audioTranslateTemplate
 	tm.templates["text_translate"] = textTemplate
 
 	return nil
