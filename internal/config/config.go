@@ -62,9 +62,10 @@ type BackendProvider struct {
 
 // PromptConfig 提示词配置
 type PromptConfig struct {
-	Defaults  PromptDefaults `mapstructure:"defaults"`
-	Languages []Language     `mapstructure:"languages"`
-	Parsing   ParsingConfig  `mapstructure:"parsing"`
+	Defaults                   PromptDefaults `mapstructure:"defaults"`
+	Languages                  []Language     `mapstructure:"languages"`
+	Parsing                    ParsingConfig  `mapstructure:"parsing"`
+	LanguageManagementStrategy string         `mapstructure:"language_management_strategy"`
 }
 
 // PromptDefaults 提示词默认设置
@@ -102,39 +103,74 @@ type LoggingConfig struct {
 
 // Load 加载配置
 func Load() (*Config, error) {
-	// 首先检查环境变量指定的配置文件
+	// --- Step 1: Setup user config reader ---
+	userViper := viper.New()
+	userViper.SetEnvPrefix("LINGUALINK")
+	userViper.AutomaticEnv()
+
+	// Set paths for user config
 	if configFile := os.Getenv("LINGUALINK_CONFIG_FILE"); configFile != "" {
-		viper.SetConfigFile(configFile)
+		userViper.SetConfigFile(configFile)
 		log.Printf("Using config file from environment variable: %s", configFile)
 	} else {
-		// 直接使用 config.yaml 作为默认配置文件
 		configDir := GetConfigDir()
-		viper.SetConfigName("config")
-		viper.SetConfigType("yaml")
-		// 配置文件搜索路径
-		viper.AddConfigPath(configDir)
-		viper.AddConfigPath(".")
+		userViper.SetConfigName("config")
+		userViper.SetConfigType("yaml")
+		userViper.AddConfigPath(configDir)
+		userViper.AddConfigPath(".")
 		log.Printf("Using default config file search in: %s", configDir)
 	}
 
-	// 环境变量设置
-	viper.AutomaticEnv()
-	viper.SetEnvPrefix("LINGUALINK")
-
-	// 默认值
-	setDefaults()
-
-	// 读取配置文件
-	if err := viper.ReadInConfig(); err != nil {
-		// 如果配置文件不存在，使用默认配置
+	// --- Step 2: Read user config ---
+	if err := userViper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("failed to read config: %w", err)
+			return nil, fmt.Errorf("failed to read user config: %w", err)
 		}
-		log.Println("Config file not found, using defaults and environment variables")
+		log.Println("User config file not found, using defaults.")
 	}
 
+	// --- Step 3: Determine the final Viper instance based on strategy ---
+	finalViper := viper.New()
+	finalViper.SetEnvPrefix("LINGUALINK")
+	finalViper.AutomaticEnv()
+	setDefaults() // Set defaults on the final viper instance first
+
+	// Get strategy from user config, default to "merge"
+	langStrategy := userViper.GetString("prompt.language_management_strategy")
+	if langStrategy == "" {
+		langStrategy = "merge"
+	}
+	log.Printf("Language management strategy: %s", langStrategy)
+
+	// If merge, load defaults first
+	if langStrategy == "merge" {
+		defaultLangFile := filepath.Join(GetConfigDir(), "languages.default.yaml")
+		if _, err := os.Stat(defaultLangFile); err == nil {
+			defaultLangViper := viper.New()
+			defaultLangViper.SetConfigFile(defaultLangFile)
+			if err := defaultLangViper.ReadInConfig(); err == nil {
+				// Merge default languages into the final viper instance
+				if err := finalViper.MergeConfigMap(defaultLangViper.AllSettings()); err != nil {
+					log.Printf("Warning: failed to merge default languages map: %v", err)
+				} else {
+					log.Printf("Default languages loaded for merging from %s", defaultLangFile)
+				}
+			} else {
+				log.Printf("Warning: failed to read default languages config: %v", err)
+			}
+		} else {
+			log.Printf("Default languages file not found: %s, skipping", defaultLangFile)
+		}
+	}
+
+	// Merge user settings on top. This will override defaults.
+	if err := finalViper.MergeConfigMap(userViper.AllSettings()); err != nil {
+		return nil, fmt.Errorf("failed to merge user settings: %w", err)
+	}
+
+	// --- Step 4: Unmarshal the final configuration ---
 	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
+	if err := finalViper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
@@ -170,46 +206,9 @@ func setDefaults() {
 	// 提示词默认配置
 	viper.SetDefault("prompt.defaults.task", "translate")
 	viper.SetDefault("prompt.defaults.target_languages", []string{"en", "ja", "zh"})
+	viper.SetDefault("prompt.language_management_strategy", "merge")
 
-	// 默认语言配置
-	viper.SetDefault("prompt.languages", []map[string]interface{}{
-		{
-			"code": "zh",
-			"names": map[string]string{
-				"display": "中文",
-				"english": "Chinese",
-				"native":  "中文",
-			},
-			"aliases": []string{"chinese", "中文", "汉语", "zh-cn"},
-		},
-		{
-			"code": "zh-hant",
-			"names": map[string]string{
-				"display": "繁體中文",
-				"english": "Traditional Chinese",
-				"native":  "繁體中文",
-			},
-			"aliases": []string{"zh-tw", "zh-hk", "traditional chinese", "繁体中文", "繁體中文"},
-		},
-		{
-			"code": "en",
-			"names": map[string]string{
-				"display": "英文",
-				"english": "English",
-				"native":  "English",
-			},
-			"aliases": []string{"english", "英文", "英语"},
-		},
-		{
-			"code": "ja",
-			"names": map[string]string{
-				"display": "日文",
-				"english": "Japanese",
-				"native":  "日本語",
-			},
-			"aliases": []string{"japanese", "日文", "日语", "日本語"},
-		},
-	})
+	// 语言配置现在从外部文件加载，不再在这里设置默认值
 
 	// 日志默认配置
 	viper.SetDefault("logging.level", "info")

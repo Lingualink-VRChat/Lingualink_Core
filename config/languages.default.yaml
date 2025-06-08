@@ -1,0 +1,418 @@
+# config/languages.default.yaml
+# 这是默认的语言定义。用户可以在自己的 config.yaml 中覆盖或添加。
+prompt:
+  languages:
+    - code: zh
+      names:
+        display: "中文"
+        english: "Chinese"
+        native: "中文"
+      aliases: ["chinese", "中文", "汉语", "zh-cn"]
+    - code: zh-hant
+      names:
+        display: "繁體中文"
+        english: "Traditional Chinese"
+        native: "繁體中文"
+      aliases: ["zh-tw", "zh-hk", "traditional chinese", "繁体中文", "繁體中文"]
+    - code: en
+      names:
+        display: "英文"
+        english: "English"
+        native: "English"
+      aliases: ["english", "英文", "英语"]
+    - code: ja
+      names:
+        display: "日文"
+        english: "Japanese"
+        native: "日本語"
+      aliases: ["japanese", "日文", "日语", "日本語"]
+    - code: ko
+      names:
+        display: "韩文"
+        english: "Korean"
+        native: "한국어"
+      aliases: ["korean", "韩文", "韩语", "한국어"]
+    - code: fr
+      names:
+        display: "法文"
+        english: "French"
+        native: "Français"
+      aliases: ["french", "法文", "法语", "français"]
+    - code: de
+      names:
+        display: "德文"
+        english: "German"
+        native: "Deutsch"
+      aliases: ["german", "德文", "德语", "deutsch"]
+    - code: es
+      names:
+        display: "西班牙文"
+        english: "Spanish"
+        native: "Español"
+      aliases: ["spanish", "西班牙文", "西班牙语", "español"]
+    - code: it
+      names:
+        display: "意大利文"
+        english: "Italian"
+        native: "Italiano"
+      aliases: ["italian", "意大利文", "意大利语", "italiano"]
+    - code: pt
+      names:
+        display: "葡萄牙文"
+        english: "Portuguese"
+        native: "Português"
+      aliases: ["portuguese", "葡萄牙文", "葡萄牙语", "português"]
+    - code: ru
+      names:
+        display: "俄文"
+        english: "Russian"
+        native: "Русский"
+      aliases: ["russian", "俄文", "俄语", "русский"]
+    - code: ar
+      names:
+        display: "阿拉伯文"
+        english: "Arabic"
+        native: "العربية"
+      aliases: ["arabic", "阿拉伯文", "阿拉伯语", "العربية"]
+    - code: hi
+      names:
+        display: "印地文"
+        english: "Hindi"
+        native: "हिन्दी"
+      aliases: ["hindi", "印地文", "印地语", "हिन्दी"]
+    - code: th
+      names:
+        display: "泰文"
+        english: "Thai"
+        native: "ไทย"
+      aliases: ["thai", "泰文", "泰语", "ไทย"]
+    - code: vi
+      names:
+        display: "越南文"
+        english: "Vietnamese"
+        native: "Tiếng Việt"
+      aliases: ["vietnamese", "越南文", "越南语", "tiếng việt"]
+    - code: id
+      names:
+        display: "印尼文"
+        english: "Indonesian"
+        native: "Bahasa Indonesia"
+      aliases: ["indonesian", "印尼文", "印尼语", "bahasa indonesia"]
+    - code: ms
+      names:
+        display: "马来文"
+        english: "Malay"
+        native: "Bahasa Melayu"
+      aliases: ["malay", "马来文", "马来语", "bahasa melayu"]
+    - code: tl
+      names:
+        display: "菲律宾文"
+        english: "Filipino"
+        native: "Filipino"
+      aliases: ["filipino", "tagalog", "菲律宾文", "菲律宾语"]
+    - code: nl
+      names:
+        display: "荷兰文"
+        english: "Dutch"
+        native: "Nederlands"
+      aliases: ["dutch", "荷兰文", "荷兰语", "nederlands"]
+    - code: sv
+      names:
+        display: "瑞典文"
+        english: "Swedish"
+        native: "Svenska"
+      aliases: ["swedish", "瑞典文", "瑞典语", "svenska"]
+    - code: no
+      names:
+        display: "挪威文"
+        english: "Norwegian"
+        native: "Norsk"
+      aliases: ["norwegian", "挪威文", "挪威语", "norsk"]
+    - code: da
+      names:
+        display: "丹麦文"
+        english: "Danish"
+        native: "Dansk"
+      aliases: ["danish", "丹麦文", "丹麦语", "dansk"]
+    - code: fi
+      names:
+        display: "芬兰文"
+        english: "Finnish"
+        native: "Suomi"
+      aliases: ["finnish", "芬兰文", "芬兰语", "suomi"]
+    - code: pl
+      names:
+        display: "波兰文"
+        english: "Polish"
+        native: "Polski"
+      aliases: ["polish", "波兰文", "波兰语", "polski"]
+    - code: cs
+      names:
+        display: "捷克文"
+        english: "Czech"
+        native: "Čeština"
+      aliases: ["czech", "捷克文", "捷克语", "čeština"]
+    - code: hu
+      names:
+        display: "匈牙利文"
+        english: "Hungarian"
+        native: "Magyar"
+      aliases: ["hungarian", "匈牙利文", "匈牙利语", "magyar"]
+    - code: ro
+      names:
+        display: "罗马尼亚文"
+        english: "Romanian"
+        native: "Română"
+      aliases: ["romanian", "罗马尼亚文", "罗马尼亚语", "română"]
+    - code: bg
+      names:
+        display: "保加利亚文"
+        english: "Bulgarian"
+        native: "Български"
+      aliases: ["bulgarian", "保加利亚文", "保加利亚语", "български"]
+    - code: hr
+      names:
+        display: "克罗地亚文"
+        english: "Croatian"
+        native: "Hrvatski"
+      aliases: ["croatian", "克罗地亚文", "克罗地亚语", "hrvatski"]
+    - code: sk
+      names:
+        display: "斯洛伐克文"
+        english: "Slovak"
+        native: "Slovenčina"
+      aliases: ["slovak", "斯洛伐克文", "斯洛伐克语", "slovenčina"]
+    - code: sl
+      names:
+        display: "斯洛文尼亚文"
+        english: "Slovenian"
+        native: "Slovenščina"
+      aliases: ["slovenian", "斯洛文尼亚文", "斯洛文尼亚语", "slovenščina"]
+    - code: et
+      names:
+        display: "爱沙尼亚文"
+        english: "Estonian"
+        native: "Eesti"
+      aliases: ["estonian", "爱沙尼亚文", "爱沙尼亚语", "eesti"]
+    - code: lv
+      names:
+        display: "拉脱维亚文"
+        english: "Latvian"
+        native: "Latviešu"
+      aliases: ["latvian", "拉脱维亚文", "拉脱维亚语", "latviešu"]
+    - code: lt
+      names:
+        display: "立陶宛文"
+        english: "Lithuanian"
+        native: "Lietuvių"
+      aliases: ["lithuanian", "立陶宛文", "立陶宛语", "lietuvių"]
+    - code: tr
+      names:
+        display: "土耳其文"
+        english: "Turkish"
+        native: "Türkçe"
+      aliases: ["turkish", "土耳其文", "土耳其语", "türkçe"]
+    - code: he
+      names:
+        display: "希伯来文"
+        english: "Hebrew"
+        native: "עברית"
+      aliases: ["hebrew", "希伯来文", "希伯来语", "עברית"]
+    - code: fa
+      names:
+        display: "波斯文"
+        english: "Persian"
+        native: "فارسی"
+      aliases: ["persian", "farsi", "波斯文", "波斯语", "فارسی"]
+    - code: ur
+      names:
+        display: "乌尔都文"
+        english: "Urdu"
+        native: "اردو"
+      aliases: ["urdu", "乌尔都文", "乌尔都语", "اردو"]
+    - code: bn
+      names:
+        display: "孟加拉文"
+        english: "Bengali"
+        native: "বাংলা"
+      aliases: ["bengali", "孟加拉文", "孟加拉语", "বাংলা"]
+    - code: ta
+      names:
+        display: "泰米尔文"
+        english: "Tamil"
+        native: "தமிழ்"
+      aliases: ["tamil", "泰米尔文", "泰米尔语", "தமிழ்"]
+    - code: te
+      names:
+        display: "泰卢固文"
+        english: "Telugu"
+        native: "తెలుగు"
+      aliases: ["telugu", "泰卢固文", "泰卢固语", "తెలుగు"]
+    - code: ml
+      names:
+        display: "马拉雅拉姆文"
+        english: "Malayalam"
+        native: "മലയാളം"
+      aliases: ["malayalam", "马拉雅拉姆文", "马拉雅拉姆语", "മലയാളം"]
+    - code: kn
+      names:
+        display: "卡纳达文"
+        english: "Kannada"
+        native: "ಕನ್ನಡ"
+      aliases: ["kannada", "卡纳达文", "卡纳达语", "ಕನ್ನಡ"]
+    - code: gu
+      names:
+        display: "古吉拉特文"
+        english: "Gujarati"
+        native: "ગુજરાતી"
+      aliases: ["gujarati", "古吉拉特文", "古吉拉特语", "ગુજરાતી"]
+    - code: pa
+      names:
+        display: "旁遮普文"
+        english: "Punjabi"
+        native: "ਪੰਜਾਬੀ"
+      aliases: ["punjabi", "旁遮普文", "旁遮普语", "ਪੰਜਾਬੀ"]
+    - code: mr
+      names:
+        display: "马拉地文"
+        english: "Marathi"
+        native: "मराठी"
+      aliases: ["marathi", "马拉地文", "马拉地语", "मराठी"]
+    - code: ne
+      names:
+        display: "尼泊尔文"
+        english: "Nepali"
+        native: "नेपाली"
+      aliases: ["nepali", "尼泊尔文", "尼泊尔语", "नेपाली"]
+    - code: si
+      names:
+        display: "僧伽罗文"
+        english: "Sinhala"
+        native: "සිංහල"
+      aliases: ["sinhala", "僧伽罗文", "僧伽罗语", "සිංහල"]
+    - code: my
+      names:
+        display: "缅甸文"
+        english: "Myanmar"
+        native: "မြန်မာ"
+      aliases: ["myanmar", "burmese", "缅甸文", "缅甸语", "မြန်မာ"]
+    - code: km
+      names:
+        display: "高棉文"
+        english: "Khmer"
+        native: "ខ្មែរ"
+      aliases: ["khmer", "cambodian", "高棉文", "高棉语", "ខ្មែរ"]
+    - code: lo
+      names:
+        display: "老挝文"
+        english: "Lao"
+        native: "ລາວ"
+      aliases: ["lao", "laotian", "老挝文", "老挝语", "ລາວ"]
+    - code: ka
+      names:
+        display: "格鲁吉亚文"
+        english: "Georgian"
+        native: "ქართული"
+      aliases: ["georgian", "格鲁吉亚文", "格鲁吉亚语", "ქართული"]
+    - code: hy
+      names:
+        display: "亚美尼亚文"
+        english: "Armenian"
+        native: "Հայերեն"
+      aliases: ["armenian", "亚美尼亚文", "亚美尼亚语", "հայերեն"]
+    - code: az
+      names:
+        display: "阿塞拜疆文"
+        english: "Azerbaijani"
+        native: "Azərbaycan"
+      aliases: ["azerbaijani", "阿塞拜疆文", "阿塞拜疆语", "azərbaycan"]
+    - code: kk
+      names:
+        display: "哈萨克文"
+        english: "Kazakh"
+        native: "Қазақ"
+      aliases: ["kazakh", "哈萨克文", "哈萨克语", "қазақ"]
+    - code: ky
+      names:
+        display: "吉尔吉斯文"
+        english: "Kyrgyz"
+        native: "Кыргыз"
+      aliases: ["kyrgyz", "吉尔吉斯文", "吉尔吉斯语", "кыргыз"]
+    - code: uz
+      names:
+        display: "乌兹别克文"
+        english: "Uzbek"
+        native: "O'zbek"
+      aliases: ["uzbek", "乌兹别克文", "乌兹别克语", "o'zbek"]
+    - code: tg
+      names:
+        display: "塔吉克文"
+        english: "Tajik"
+        native: "Тоҷикӣ"
+      aliases: ["tajik", "塔吉克文", "塔吉克语", "тоҷикӣ"]
+    - code: mn
+      names:
+        display: "蒙古文"
+        english: "Mongolian"
+        native: "Монгол"
+      aliases: ["mongolian", "蒙古文", "蒙古语", "монгол"]
+    - code: bo
+      names:
+        display: "藏文"
+        english: "Tibetan"
+        native: "བོད་ཡིག"
+      aliases: ["tibetan", "藏文", "藏语", "བོད་ཡིག"]
+    - code: ug
+      names:
+        display: "维吾尔文"
+        english: "Uyghur"
+        native: "ئۇيغۇر"
+      aliases: ["uyghur", "维吾尔文", "维吾尔语", "ئۇيغۇر"]
+    - code: sw
+      names:
+        display: "斯瓦希里文"
+        english: "Swahili"
+        native: "Kiswahili"
+      aliases: ["swahili", "斯瓦希里文", "斯瓦希里语", "kiswahili"]
+    - code: am
+      names:
+        display: "阿姆哈拉文"
+        english: "Amharic"
+        native: "አማርኛ"
+      aliases: ["amharic", "阿姆哈拉文", "阿姆哈拉语", "አማርኛ"]
+    - code: yo
+      names:
+        display: "约鲁巴文"
+        english: "Yoruba"
+        native: "Yorùbá"
+      aliases: ["yoruba", "约鲁巴文", "约鲁巴语", "yorùbá"]
+    - code: ig
+      names:
+        display: "伊博文"
+        english: "Igbo"
+        native: "Igbo"
+      aliases: ["igbo", "伊博文", "伊博语"]
+    - code: ha
+      names:
+        display: "豪萨文"
+        english: "Hausa"
+        native: "Hausa"
+      aliases: ["hausa", "豪萨文", "豪萨语"]
+    - code: zu
+      names:
+        display: "祖鲁文"
+        english: "Zulu"
+        native: "isiZulu"
+      aliases: ["zulu", "祖鲁文", "祖鲁语", "isizulu"]
+    - code: af
+      names:
+        display: "南非荷兰文"
+        english: "Afrikaans"
+        native: "Afrikaans"
+      aliases: ["afrikaans", "南非荷兰文", "南非荷兰语"]
+    - code: xh
+      names:
+        display: "科萨文"
+        english: "Xhosa"
+        native: "isiXhosa"
+      aliases: ["xhosa", "科萨文", "科萨语", "isixhosa"]

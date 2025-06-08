@@ -21,6 +21,11 @@ type ProcessRequest struct {
 	Options         map[string]interface{} `json:"options,omitempty"`
 }
 
+// GetTargetLanguages 实现 ProcessableRequest 接口
+func (req ProcessRequest) GetTargetLanguages() []string {
+	return req.TargetLanguages
+}
+
 // ProcessResponse 文本处理响应
 type ProcessResponse struct {
 	RequestID      string                 `json:"request_id"`
@@ -58,30 +63,29 @@ func NewProcessor(
 	}
 }
 
-// Process 处理文本翻译
-func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessResponse, error) {
-	startTime := time.Now()
-	requestID := generateRequestID()
+// Process 方法已移除 - 现在使用 ProcessingService 统一处理流程
 
-	// 记录指标
-	defer func() {
-		duration := time.Since(startTime)
-		p.metrics.RecordLatency("text.process", duration, map[string]string{
-			"target_count": fmt.Sprintf("%d", len(req.TargetLanguages)),
-		})
-	}()
-
-	p.logger.WithFields(logrus.Fields{
-		"request_id":   requestID,
-		"text_length":  len(req.Text),
-		"target_count": len(req.TargetLanguages),
-	}).Info("Processing text translation request")
-
-	// 1. 验证请求
-	if err := p.validateRequest(req); err != nil {
-		return nil, fmt.Errorf("validate request: %w", err)
+// Validate 验证请求 - 实现 LogicHandler 接口
+func (p *Processor) Validate(req ProcessRequest) error {
+	if req.Text == "" {
+		return fmt.Errorf("text is required")
 	}
 
+	// 验证文本长度限制（3000字符）
+	maxLength := 3000
+	if len(req.Text) > maxLength {
+		return fmt.Errorf("text length (%d characters) exceeds maximum allowed length (%d characters)", len(req.Text), maxLength)
+	}
+
+	if len(req.TargetLanguages) == 0 {
+		return fmt.Errorf("target languages are required")
+	}
+
+	return nil
+}
+
+// BuildLLMRequest 构建LLM请求 - 实现 LogicHandler 接口
+func (p *Processor) BuildLLMRequest(ctx context.Context, req ProcessRequest) (*llm.LLMRequest, *prompt.OutputRules, error) {
 	// 2. 处理目标语言
 	targetLangCodes := req.TargetLanguages
 	if len(targetLangCodes) == 0 {
@@ -100,44 +104,29 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 
 	promptObj, err := p.promptEngine.BuildTextPrompt(ctx, promptReq)
 	if err != nil {
-		return nil, fmt.Errorf("build prompt: %w", err)
+		return nil, nil, fmt.Errorf("build prompt: %w", err)
 	}
 
-	// 4. 调用LLM
+	// 4. 构建LLM请求
 	llmReq := &llm.LLMRequest{
 		SystemPrompt: promptObj.System,
 		UserPrompt:   promptObj.User,
 		// 文本处理不需要音频数据
 	}
 
-	llmResp, err := p.llmManager.Process(ctx, llmReq)
-	if err != nil {
-		p.metrics.RecordCounter("text.process.error", 1, map[string]string{
-			"error_type": "llm_error",
-		})
-		return nil, fmt.Errorf("llm process: %w", err)
-	}
+	return llmReq, &promptObj.OutputRules, nil
+}
 
-	// 5. 解析响应
-	parsed, err := p.promptEngine.ParseResponse(llmResp.Content, promptObj.OutputRules)
-	if err != nil {
-		p.logger.WithError(err).Warn("Failed to parse LLM response, using raw response")
-		parsed = &prompt.ParsedResponse{
-			RawText:  llmResp.Content,
-			Sections: make(map[string]string),
-			Metadata: map[string]interface{}{
-				"parse_error": err.Error(),
-			},
-		}
-	}
+// BuildSuccessResponse 构建成功响应 - 实现 LogicHandler 接口
+func (p *Processor) BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *prompt.ParsedResponse, req ProcessRequest) *ProcessResponse {
+	requestID := generateRequestID()
 
-	// 6. 构建响应
 	response := &ProcessResponse{
 		RequestID:      requestID,
 		Status:         "success",
 		SourceText:     req.Text,
 		RawResponse:    llmResp.Content,
-		ProcessingTime: time.Since(startTime).Seconds(),
+		ProcessingTime: 0, // 这将在 Service 中设置
 		Metadata: map[string]interface{}{
 			"model":         llmResp.Model,
 			"prompt_tokens": llmResp.PromptTokens,
@@ -148,58 +137,37 @@ func (p *Processor) Process(ctx context.Context, req ProcessRequest) (*ProcessRe
 	}
 
 	// 如果解析失败，标记为部分成功
-	if err != nil && response.Status == "success" {
+	if parsedResp == nil || parsedResp.Metadata["parse_error"] != nil {
 		response.Status = "partial_success"
 	}
 
 	// 7. 提取翻译结果
-	for langCode, translationText := range parsed.Sections {
-		// 验证这是一个我们期望的目标语言代码
-		isTargetLang := false
-		for _, targetCode := range targetLangCodes {
-			if langCode == targetCode {
-				isTargetLang = true
-				break
+	targetLangCodes := req.TargetLanguages
+	if parsedResp != nil {
+		for langCode, translationText := range parsedResp.Sections {
+			// 验证这是一个我们期望的目标语言代码
+			isTargetLang := false
+			for _, targetCode := range targetLangCodes {
+				if langCode == targetCode {
+					isTargetLang = true
+					break
+				}
+			}
+			if isTargetLang {
+				response.Translations[langCode] = translationText
 			}
 		}
-		if isTargetLang {
-			response.Translations[langCode] = translationText
-		}
 	}
 
-	// 8. 回退机制：如果没有找到任何翻译结果，尝试将原始响应作为目标语言的翻译
-	// 这包括两种情况：
-	// 1. 解析失败 (err != nil)
-	// 2. 解析成功但没有找到预期的翻译结果 (len(response.Translations) == 0)
-	if len(response.Translations) == 0 {
-		p.extractFromRawResponse(response, llmResp.Content, targetLangCodes)
-	}
-
-	// 记录成功指标
-	p.metrics.RecordCounter("text.process.success", 1, map[string]string{
-		"target_count": fmt.Sprintf("%d", len(targetLangCodes)),
-	})
-
-	return response, nil
+	return response
 }
 
-// validateRequest 验证请求
-func (p *Processor) validateRequest(req ProcessRequest) error {
-	if req.Text == "" {
-		return fmt.Errorf("text is required")
+// ApplyFallback 应用回退逻辑 - 实现 LogicHandler 接口
+func (p *Processor) ApplyFallback(response *ProcessResponse, rawContent string, targetLangCodes []string) {
+	// 8. 回退机制：如果没有找到任何翻译结果，尝试将原始响应作为目标语言的翻译
+	if len(response.Translations) == 0 {
+		p.extractFromRawResponse(response, rawContent, targetLangCodes)
 	}
-
-	// 验证文本长度限制（3000字符）
-	maxLength := 3000
-	if len(req.Text) > maxLength {
-		return fmt.Errorf("text length (%d characters) exceeds maximum allowed length (%d characters)", len(req.Text), maxLength)
-	}
-
-	if len(req.TargetLanguages) == 0 {
-		return fmt.Errorf("target languages are required")
-	}
-
-	return nil
 }
 
 // extractFromRawResponse 从原始响应中提取翻译内容

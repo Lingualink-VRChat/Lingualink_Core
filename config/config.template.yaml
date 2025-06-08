@@ -28,6 +28,11 @@ backends:
 
 # 提示词配置
 prompt:
+  # 语言管理策略: 'merge' 或 'override'
+  # 'merge' (默认): 将此处的语言列表与 languages.default.yaml 中的列表合并
+  # 'override': 完全忽略默认语言列表，仅使用此文件中定义的语言
+  # 如果要禁用某些默认语言，或只使用一个很小的自定义列表，请使用 'override'
+  language_management_strategy: merge
   defaults:
     task: translate
     target_languages: ["en", "ja", "zh"]
