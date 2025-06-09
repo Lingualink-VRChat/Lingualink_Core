@@ -162,37 +162,81 @@ func (p *Processor) BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *p
 	return response
 }
 
-// ApplyFallback 应用回退逻辑 - 实现 LogicHandler 接口
-func (p *Processor) ApplyFallback(response *ProcessResponse, rawContent string, targetLangCodes []string) {
-	// 8. 回退机制：如果没有找到任何翻译结果，尝试将原始响应作为目标语言的翻译
-	if len(response.Translations) == 0 {
-		p.extractFromRawResponse(response, rawContent, targetLangCodes)
+// ApplyFallback 应用更智能的回退逻辑 - 实现 LogicHandler 接口
+func (p *Processor) ApplyFallback(response *ProcessResponse, rawContent string, outputRules *prompt.OutputRules) {
+	// --- Tier 0: 清理和预检 ---
+
+	// 1. 收集所有可能的提示词"脚手架" (keywords)
+	var keywords []string
+	if outputRules != nil {
+		for _, section := range outputRules.Sections {
+			keywords = append(keywords, section.Key)
+			keywords = append(keywords, section.Aliases...)
+		}
 	}
-}
+	// 添加通用分隔符
+	separators := []string{":", "：", "\n"}
 
-// extractFromRawResponse 从原始响应中提取翻译内容
-func (p *Processor) extractFromRawResponse(response *ProcessResponse, rawContent string, targetLangCodes []string) {
-	// 回退逻辑：当LLM直接返回翻译结果而不是结构化格式时
-	// 将整个响应作为第一个目标语言的翻译结果
-	if len(targetLangCodes) > 0 {
-		// 清理原始响应内容
-		cleanContent := strings.TrimSpace(rawContent)
-		if cleanContent != "" {
-			// 将原始响应作为第一个目标语言的翻译
-			response.Translations[targetLangCodes[0]] = cleanContent
-			response.Status = "partial_success"
+	// 2. 从原始响应中剥离所有已知的脚手架和分隔符
+	cleanedContent := rawContent
+	for _, keyword := range keywords {
+		cleanedContent = strings.ReplaceAll(cleanedContent, keyword, "")
+	}
+	for _, sep := range separators {
+		cleanedContent = strings.ReplaceAll(cleanedContent, sep, "")
+	}
+	cleanedContent = strings.TrimSpace(cleanedContent)
 
+	// 3. 如果清理后内容为空，则说明LLM没有提供任何有用信息，直接返回
+	if cleanedContent == "" {
+		p.logger.WithFields(logrus.Fields{
+			"raw_response": rawContent,
+		}).Warn("Fallback aborted: LLM response contained only prompt artifacts.")
+		// 如果解析器未能解析出任何内容，并且原始响应只包含脚手架，
+		// 那么就保持 translations 为空，这是最准确的状态。
+		if len(response.Translations) == 0 {
+			response.Status = "failed"
 			if response.Metadata == nil {
 				response.Metadata = make(map[string]interface{})
 			}
-			response.Metadata["fallback_mode"] = true
-			response.Metadata["fallback_reason"] = "LLM returned unstructured response, using as translation for first target language"
-
-			p.logger.WithFields(logrus.Fields{
-				"target_language": targetLangCodes[0],
-				"content_length":  len(cleanContent),
-			}).Info("Applied fallback: using raw response as translation")
+			response.Metadata["error_reason"] = "LLM returned an empty or artifact-only response."
 		}
+		return
+	}
+
+	// 如果执行到这里，说明 `cleanedContent` 包含一些未知但可能有效的内容。
+	var fallbackReasons []string
+
+	// --- Tier 1: 填充缺失的翻译内容 ---
+	// 从 outputRules 中获取目标语言
+	var targetLangCodes []string
+	if outputRules != nil {
+		for _, section := range outputRules.Sections {
+			if section.LanguageCode != "" {
+				targetLangCodes = append(targetLangCodes, section.LanguageCode)
+			}
+		}
+	}
+
+	if len(targetLangCodes) > 0 && len(response.Translations) == 0 {
+		// 对于文本处理，直接将清理后的内容作为第一个目标语言的翻译
+		response.Translations[targetLangCodes[0]] = cleanedContent
+		fallbackReasons = append(fallbackReasons, fmt.Sprintf("using sanitized raw content as translation for %s", targetLangCodes[0]))
+		p.logger.WithFields(logrus.Fields{
+			"target_language": targetLangCodes[0],
+			"content":         cleanedContent,
+		}).Info("Applied fallback for translation.")
+	}
+
+	// 如果应用了任何回退逻辑，更新状态和元数据
+	if len(fallbackReasons) > 0 {
+		response.Status = "partial_success"
+		if response.Metadata == nil {
+			response.Metadata = make(map[string]interface{})
+		}
+		response.Metadata["fallback_mode"] = true
+		response.Metadata["fallback_reason"] = strings.Join(fallbackReasons, "; ")
+		p.logger.WithField("reasons", fallbackReasons).Info("Fallback logic successfully applied.")
 	}
 }
 

@@ -20,7 +20,7 @@ type LogicHandler[T ProcessableRequest, R any] interface {
 	Validate(req T) error
 	BuildLLMRequest(ctx context.Context, req T) (*llm.LLMRequest, *prompt.OutputRules, error)
 	BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *prompt.ParsedResponse, req T) R
-	ApplyFallback(response R, rawContent string, targetLangCodes []string)
+	ApplyFallback(response R, rawContent string, outputRules *prompt.OutputRules)
 }
 
 // Service 通用处理服务
@@ -71,7 +71,7 @@ func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler
 	response := handler.BuildSuccessResponse(llmResp, parsed, req)
 
 	// 6. 应用回退逻辑
-	handler.ApplyFallback(response, llmResp.Content, req.GetTargetLanguages())
+	handler.ApplyFallback(response, llmResp.Content, outputRules)
 
 	s.logger.WithFields(logrus.Fields{
 		"processing_time": time.Since(startTime).Seconds(),
