@@ -10,26 +10,29 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/sirupsen/logrus"
 )
 
 // BaseOpenAICompatibleBackend 基础OpenAI兼容后端
 type BaseOpenAICompatibleBackend struct {
-	name    string
-	baseURL string
-	apiKey  string
-	model   string
-	client  *http.Client
-	logger  *logrus.Logger
+	name       string
+	baseURL    string
+	apiKey     string
+	model      string
+	client     *http.Client
+	logger     *logrus.Logger
+	parameters config.LLMParameters
 }
 
 // NewBaseOpenAICompatibleBackend 创建基础后端
-func NewBaseOpenAICompatibleBackend(name, baseURL, apiKey, model string, timeout time.Duration, logger *logrus.Logger) *BaseOpenAICompatibleBackend {
+func NewBaseOpenAICompatibleBackend(name, baseURL, apiKey, model string, timeout time.Duration, parameters config.LLMParameters, logger *logrus.Logger) *BaseOpenAICompatibleBackend {
 	return &BaseOpenAICompatibleBackend{
-		name:    name,
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		model:   model,
+		name:       name,
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		model:      model,
+		parameters: parameters,
 		client: &http.Client{
 			Timeout: timeout,
 		},
@@ -50,6 +53,9 @@ func (b *BaseOpenAICompatibleBackend) Process(ctx context.Context, req *LLMReque
 
 	// 添加默认参数
 	b.addDefaultParameters(apiReq)
+
+	// 添加请求中的自定义参数（会覆盖默认参数）
+	b.addRequestParameters(apiReq, req)
 
 	// 序列化请求
 	reqBody, err := json.Marshal(apiReq)
@@ -171,9 +177,73 @@ func (b *BaseOpenAICompatibleBackend) buildAudioMessage(req *LLMRequest) map[str
 
 // addDefaultParameters 添加默认参数 - 可被子类重写
 func (b *BaseOpenAICompatibleBackend) addDefaultParameters(apiReq map[string]interface{}) {
-	// 默认参数
-	apiReq["temperature"] = 0.0
-	apiReq["max_tokens"] = 100
+	// 从配置中读取参数，如果配置中没有则使用默认值
+	if b.parameters.Temperature != nil {
+		apiReq["temperature"] = *b.parameters.Temperature
+	} else {
+		apiReq["temperature"] = 0.7 // 默认值
+	}
+
+	if b.parameters.MaxTokens != nil {
+		apiReq["max_tokens"] = *b.parameters.MaxTokens
+	} else {
+		apiReq["max_tokens"] = 1000 // 默认值
+	}
+
+	if b.parameters.TopP != nil {
+		apiReq["top_p"] = *b.parameters.TopP
+	}
+
+	if b.parameters.TopK != nil {
+		apiReq["top_k"] = *b.parameters.TopK
+	}
+
+	if b.parameters.RepetitionPenalty != nil {
+		apiReq["repetition_penalty"] = *b.parameters.RepetitionPenalty
+	}
+
+	if b.parameters.FrequencyPenalty != nil {
+		apiReq["frequency_penalty"] = *b.parameters.FrequencyPenalty
+	}
+
+	if b.parameters.PresencePenalty != nil {
+		apiReq["presence_penalty"] = *b.parameters.PresencePenalty
+	}
+
+	if len(b.parameters.Stop) > 0 {
+		apiReq["stop"] = b.parameters.Stop
+	}
+
+	if b.parameters.Seed != nil {
+		apiReq["seed"] = *b.parameters.Seed
+	}
+
+	if b.parameters.Stream != nil {
+		apiReq["stream"] = *b.parameters.Stream
+	} else {
+		apiReq["stream"] = false // 默认不使用流式输出
+	}
+}
+
+// addRequestParameters 添加请求中的自定义参数
+func (b *BaseOpenAICompatibleBackend) addRequestParameters(apiReq map[string]interface{}, req *LLMRequest) {
+	if req.Options == nil {
+		return
+	}
+
+	// 支持的参数列表
+	supportedParams := []string{
+		"temperature", "max_tokens", "top_p", "top_k",
+		"repetition_penalty", "frequency_penalty", "presence_penalty",
+		"stop", "seed", "stream",
+	}
+
+	// 从请求选项中添加参数（会覆盖配置和默认值）
+	for _, param := range supportedParams {
+		if value, exists := req.Options[param]; exists {
+			apiReq[param] = value
+		}
+	}
 }
 
 // setRequestHeaders 设置请求头 - 可被子类重写

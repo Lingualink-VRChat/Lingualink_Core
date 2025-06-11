@@ -25,6 +25,18 @@ backends:
       url: http://192.168.8.6:8000/v1
       model: qwenOmni7
       api_key: "sk-VkxlIMJf6KLHpI8MN"
+      # LLM模型参数配置（可选）
+      parameters:
+        temperature: 0.7          # 控制输出的随机性，范围 0.0-2.0
+        max_tokens: 1000          # 最大输出token数
+        top_p: 0.9               # 核采样参数，范围 0.0-1.0
+        # top_k: 50              # Top-K采样参数（某些模型支持）
+        # repetition_penalty: 1.1 # 重复惩罚，范围 0.0-2.0
+        # frequency_penalty: 0.0  # 频率惩罚，范围 -2.0-2.0
+        # presence_penalty: 0.0   # 存在惩罚，范围 -2.0-2.0
+        # stop: ["<|endoftext|>"] # 停止词列表
+        # seed: 42               # 随机种子，用于可重现的输出
+        stream: false            # 是否使用流式输出
 
 # 提示词配置
 prompt:

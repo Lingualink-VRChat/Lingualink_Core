@@ -52,12 +52,27 @@ type LoadBalancerConfig struct {
 
 // BackendProvider 后端提供者配置
 type BackendProvider struct {
-	Name   string                 `mapstructure:"name"`
-	Type   string                 `mapstructure:"type"`
-	Config map[string]interface{} `mapstructure:"config"`
-	URL    string                 `mapstructure:"url"`
-	Model  string                 `mapstructure:"model"`
-	APIKey string                 `mapstructure:"api_key"`
+	Name       string                 `mapstructure:"name"`
+	Type       string                 `mapstructure:"type"`
+	Config     map[string]interface{} `mapstructure:"config"`
+	URL        string                 `mapstructure:"url"`
+	Model      string                 `mapstructure:"model"`
+	APIKey     string                 `mapstructure:"api_key"`
+	Parameters LLMParameters          `mapstructure:"parameters"`
+}
+
+// LLMParameters LLM模型参数配置
+type LLMParameters struct {
+	Temperature        *float64 `mapstructure:"temperature"`
+	MaxTokens          *int     `mapstructure:"max_tokens"`
+	TopP               *float64 `mapstructure:"top_p"`
+	TopK               *int     `mapstructure:"top_k"`
+	RepetitionPenalty  *float64 `mapstructure:"repetition_penalty"`
+	FrequencyPenalty   *float64 `mapstructure:"frequency_penalty"`
+	PresencePenalty    *float64 `mapstructure:"presence_penalty"`
+	Stop               []string `mapstructure:"stop"`
+	Seed               *int     `mapstructure:"seed"`
+	Stream             *bool    `mapstructure:"stream"`
 }
 
 // PromptConfig 提示词配置
