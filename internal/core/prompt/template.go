@@ -51,8 +51,14 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 		SystemPrompt: `你是一个高级的语音处理助手。你的任务是：
 1. 将音频内容转录成其原始语言的文本。
 
-请按照以下格式清晰地组织你的输出：
-原文:`,
+请最终 **务必** 在回答中包含如下 JSON，对其使用 markdown ` + "```json```" + ` 包裹：
+` + "```json" + `
+{
+  "transcription": "<转录文本>",
+  "translations": {}
+}
+` + "```" + `
+除 JSON 与必要换行外，可以补充解释；但 JSON 代码块必须完整、合法。`,
 		UserPrompt: `请转录下面的音频内容。`,
 	}
 
@@ -67,11 +73,18 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{ add $index 2 }}. 将文本翻译成{{ $langName }}。
 {{- end }}
 
-请按照以下格式清晰地组织你的输出：
-原文:
-{{- range .TargetLanguageNames }}
-{{ . }}:
-{{- end }}`,
+请最终 **务必** 在回答中包含如下 JSON，对其使用 markdown ` + "```json```" + ` 包裹：
+` + "```json" + `
+{
+  "transcription": "<转录文本>",
+  "translations": {
+{{- range $index, $langCode := .TargetLanguageCodes }}
+    "{{ $langCode }}": "<{{ index $.TargetLanguageNames $index }} 译文>"{{ if ne $index (sub (len $.TargetLanguageCodes) 1) }},{{ end }}
+{{- end }}
+  }
+}
+` + "```" + `
+除 JSON 与必要换行外，可以补充解释；但 JSON 代码块必须完整、合法。`,
 		UserPrompt: `请处理下面的音频内容。`,
 	}
 
@@ -86,12 +99,18 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{ add $index 1 }}. 将文本翻译成{{ $langName }}。
 {{- end }}
 
-请按照以下格式清晰地组织你的输出：
-{{- range .TargetLanguageNames }}
-{{ . }}:
+请最终 **务必** 在回答中包含如下 JSON，对其使用 markdown ` + "```json```" + ` 包裹：
+` + "```json" + `
+{
+  "source_text": "<原文>",
+  "translations": {
+{{- range $index, $langCode := .TargetLanguageCodes }}
+    "{{ $langCode }}": "<{{ index $.TargetLanguageNames $index }} 译文>"{{ if ne $index (sub (len $.TargetLanguageCodes) 1) }},{{ end }}
 {{- end }}
-
-请确保翻译准确、自然，并保持原文的语气和风格。`,
+  }
+}
+` + "```" + `
+除 JSON 与必要换行外，可以补充解释；但 JSON 代码块必须完整、合法。请确保翻译准确、自然，并保持原文的语气和风格。`,
 		UserPrompt: `请翻译以下文本：
 
 {{ .SourceText }}`,
@@ -120,6 +139,8 @@ func (tm *TemplateManager) BuildPrompt(ctx context.Context, templateName string,
 	// 添加模板函数
 	funcMap := template.FuncMap{
 		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
+		"len": func(s []string) int { return len(s) },
 		"default": func(defaultValue, value interface{}) interface{} {
 			if value == nil || value == "" {
 				return defaultValue

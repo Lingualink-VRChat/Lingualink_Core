@@ -61,13 +61,19 @@ type OutputSection struct {
 	Order        int      `json:"order"`
 }
 
+// ParsedResponse 解析后的响应
+type ParsedResponse struct {
+	RawText  string                 `json:"raw_text"`
+	Sections map[string]string      `json:"sections"` // 键为短代码或特殊键（如"原文"）
+	Metadata map[string]interface{} `json:"metadata"`
+}
+
 // 移除 PromptTemplate 和 Language 定义，已移动到单独的文件
 
 // Engine 提示词引擎
 type Engine struct {
 	templateManager *TemplateManager
 	languageManager *LanguageManager
-	parser          *StructuredParser
 	config          config.PromptConfig
 	logger          *logrus.Logger
 }
@@ -77,12 +83,10 @@ func NewEngine(cfg config.PromptConfig, logger *logrus.Logger) (*Engine, error) 
 	// 创建各个管理器
 	templateManager := NewTemplateManager(logger)
 	languageManager := NewLanguageManager(cfg, logger)
-	parser := NewStructuredParser(cfg.Parsing.Separators, logger)
 
 	engine := &Engine{
 		templateManager: templateManager,
 		languageManager: languageManager,
-		parser:          parser,
 		config:          cfg,
 		logger:          logger,
 	}
@@ -179,79 +183,27 @@ func (e *Engine) GetLanguages() map[string]*Language {
 	return e.languageManager.GetLanguages()
 }
 
-// ParseResponse 解析LLM响应
-func (e *Engine) ParseResponse(content string, rules OutputRules) (*ParsedResponse, error) {
-	// 首先使用标准解析器解析（得到原始键值对）
-	tempParsed, err := e.parser.Parse(content, rules)
+// ParseResponse 解析LLM响应 - 仅支持 JSON 解析
+func (e *Engine) ParseResponse(content string) (*ParsedResponse, error) {
+	// 只进行 JSON 块解析，失败时直接返回错误
+	jsonData, ok := extractJSONBlock(content)
+	if !ok {
+		e.logger.WithField("content", content).Error("No JSON block found in LLM response")
+		return nil, fmt.Errorf("no json block found in response")
+	}
+
+	parsedResp, err := parseJSONResponse(jsonData)
 	if err != nil {
-		return &ParsedResponse{
-			RawText:  content,
-			Sections: make(map[string]string),
-			Metadata: map[string]interface{}{"parse_error": err.Error()},
-		}, err
+		e.logger.WithError(err).WithField("jsonData", string(jsonData)).Error("Failed to parse JSON response")
+		return nil, fmt.Errorf("invalid json in response: %w", err)
 	}
 
-	// 将键转换为短代码
-	finalSections := make(map[string]string)
-	e.logger.WithField("tempParsedSections", tempParsed.Sections).Debug("Original parsed sections before conversion")
+	e.logger.WithFields(map[string]interface{}{
+		"parser":  "json",
+		"success": true,
+	}).Debug("Successfully parsed JSON response")
 
-	for keyFromLLM, value := range tempParsed.Sections {
-		// 1. 首先尝试使用OutputRules匹配
-		foundRule := false
-		for _, sectionRule := range rules.Sections {
-			isMatch := sectionRule.Key == keyFromLLM
-			if !isMatch {
-				for _, alias := range sectionRule.Aliases {
-					if alias == keyFromLLM {
-						isMatch = true
-						break
-					}
-				}
-			}
-
-			if isMatch {
-				if sectionRule.LanguageCode != "" {
-					// 语言翻译段落，使用短代码作为键
-					finalSections[sectionRule.LanguageCode] = value
-					e.logger.WithFields(logrus.Fields{
-						"llmKey":         keyFromLLM,
-						"finalKey":       sectionRule.LanguageCode,
-						"method":         "outputrules",
-						"sectionRuleKey": sectionRule.Key,
-					}).Debug("Converted LLM key to language code")
-				} else {
-					// 非语言段落（如"原文"），保持原键
-					finalSections[sectionRule.Key] = value
-				}
-				foundRule = true
-				break
-			}
-		}
-
-		// 2. 如果OutputRules没有匹配到，尝试通用语言识别
-		if !foundRule {
-			if langCode, err := e.languageManager.IdentifyLanguageFromText(keyFromLLM); err == nil {
-				finalSections[langCode] = value
-				e.logger.WithFields(logrus.Fields{
-					"llmKey":   keyFromLLM,
-					"finalKey": langCode,
-					"method":   "fallback_language_identification",
-				}).Debug("Converted LLM key to language code using fallback")
-				foundRule = true
-			}
-		}
-
-		// 3. 如果还是没有匹配到，记录警告
-		if !foundRule {
-			e.logger.Warnf("Parsed section key '%s' from LLM does not match any known language or section. Skipping.", keyFromLLM)
-		}
-	}
-
-	return &ParsedResponse{
-		RawText:  tempParsed.RawText,
-		Sections: finalSections,
-		Metadata: tempParsed.Metadata,
-	}, nil
+	return parsedResp, nil
 }
 
 // 移除重复的方法和类型定义，已移动到单独的文件

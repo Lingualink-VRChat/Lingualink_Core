@@ -18,9 +18,8 @@ type ProcessableRequest interface {
 // LogicHandler 定义了特定处理器（如音频或文本）需要提供的逻辑
 type LogicHandler[T ProcessableRequest, R any] interface {
 	Validate(req T) error
-	BuildLLMRequest(ctx context.Context, req T) (*llm.LLMRequest, *prompt.OutputRules, error)
+	BuildLLMRequest(ctx context.Context, req T) (*llm.LLMRequest, error)
 	BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *prompt.ParsedResponse, req T) R
-	ApplyFallback(response R, rawContent string, outputRules *prompt.OutputRules)
 }
 
 // Service 通用处理服务
@@ -50,7 +49,7 @@ func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler
 	}
 
 	// 2. 构建LLM请求
-	llmReq, outputRules, err := handler.BuildLLMRequest(ctx, req)
+	llmReq, err := handler.BuildLLMRequest(ctx, req)
 	if err != nil {
 		return emptyResponse, fmt.Errorf("failed to build LLM request: %w", err)
 	}
@@ -62,16 +61,14 @@ func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler
 	}
 
 	// 4. 解析响应
-	parsed, err := s.promptEngine.ParseResponse(llmResp.Content, *outputRules)
+	parsed, err := s.promptEngine.ParseResponse(llmResp.Content)
 	if err != nil {
-		s.logger.WithError(err).Warn("Failed to parse LLM response, will apply fallback")
+		s.logger.WithError(err).Error("Failed to parse LLM response")
+		return emptyResponse, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 
 	// 5. 构建成功响应
 	response := handler.BuildSuccessResponse(llmResp, parsed, req)
-
-	// 6. 应用回退逻辑
-	handler.ApplyFallback(response, llmResp.Content, outputRules)
 
 	s.logger.WithFields(logrus.Fields{
 		"processing_time": time.Since(startTime).Seconds(),
