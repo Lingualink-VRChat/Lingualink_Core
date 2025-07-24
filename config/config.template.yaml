@@ -30,7 +30,6 @@ backends:
         temperature: 0.2          # 控制输出的随机性，范围 0.0-2.0
         max_tokens: 120           # 最大输出token数
         top_p: 0.95              # 核采样参数，范围 0.0-1.0
-
         stream: false            # 是否使用流式输出
 
 # 提示词配置
