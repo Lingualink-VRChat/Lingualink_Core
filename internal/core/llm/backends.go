@@ -24,6 +24,7 @@ func NewOpenAIBackend(cfg config.BackendProvider, logger *logrus.Logger) *OpenAI
 			cfg.APIKey,
 			cfg.Model,
 			30*time.Second,
+			cfg.Parameters,
 			logger,
 		),
 	}
@@ -77,6 +78,7 @@ func NewVLLMBackend(cfg config.BackendProvider, logger *logrus.Logger) *VLLMBack
 			cfg.APIKey,
 			cfg.Model,
 			60*time.Second,
+			cfg.Parameters,
 			logger,
 		),
 	}
