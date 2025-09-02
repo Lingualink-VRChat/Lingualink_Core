@@ -103,6 +103,12 @@ prompt:
         english: "Italian"
         native: "Italiano"
       aliases: ["italian", "意大利语", "意大利文"]
+    - code: neko
+      names:
+        display: "猫娘语"
+        english: "Neko-speak"
+        native: "猫娘语"
+      aliases: ["neko", "猫娘", "喵喵语", "萌妹语", "nya"]
   parsing:
     separators: [":", "：", "-", "—"]
     strict_mode: false

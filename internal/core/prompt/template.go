@@ -73,6 +73,16 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{ add $index 2 }}. 将文本翻译成{{ $langName }}。
 {{- end }}
 
+{{ if contains .TargetLanguageCodes "neko" }}
+重要补充（当目标包含"猫娘语"时适用）：
+- "猫娘语"的要求：
+  1) 语气可爱、偏撒娇，第一人称可使用"人家"，句末适度加入"喵~ / nya~"（每句最多1次，长句可2次）。
+  2) 保持原文语义与信息完整，不要添加无关内容或剧情。
+  3) 专业术语优先准确表达，必要时弱化风格但不要移除信息。
+  4) 专有名词/外来词保持原文或合理音译，不随意改造。
+- 输出的 JSON 中，"translations" 的 "neko" 键对应"猫娘语"版本。
+{{ end }}
+
 请最终 **务必** 在回答中包含如下 JSON，对其使用 markdown ` + "```json```" + ` 包裹：
 ` + "```json" + `
 {
@@ -98,6 +108,16 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{- range $index, $langName := .TargetLanguageNames }}
 {{ add $index 1 }}. 将文本翻译成{{ $langName }}。
 {{- end }}
+
+{{ if contains .TargetLanguageCodes "neko" }}
+重要补充（当目标包含"猫娘语"时适用）：
+- "猫娘语"的要求：
+  1) 语气可爱、偏撒娇，第一人称可使用"人家"，句末适度加入"喵~ / nya~"（每句最多1次，长句可2次）。
+  2) 保持原文语义与信息完整，不要添加无关内容或剧情。
+  3) 专业术语优先准确表达，必要时弱化风格但不要移除信息。
+  4) 专有名词/外来词保持原文或合理音译，不随意改造。
+- 输出的 JSON 中，"translations" 的 "neko" 键对应"猫娘语"版本。
+{{ end }}
 
 请最终 **务必** 在回答中包含如下 JSON，对其使用 markdown ` + "```json```" + ` 包裹：
 ` + "```json" + `
@@ -146,6 +166,14 @@ func (tm *TemplateManager) BuildPrompt(ctx context.Context, templateName string,
 				return defaultValue
 			}
 			return value
+		},
+		"contains": func(list []string, s string) bool {
+			for _, v := range list {
+				if v == s {
+					return true
+				}
+			}
+			return false
 		},
 	}
 
