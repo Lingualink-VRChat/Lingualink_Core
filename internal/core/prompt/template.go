@@ -76,8 +76,8 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{ if contains .TargetLanguageCodes "neko" }}
 重要补充（当目标包含"猫娘语"时适用）：
 - "猫娘语"的要求：
-  1) 语气可爱、偏撒娇
-  2) 保持原文语义与信息完整，不要添加无关内容或剧情
+  1) 语气可爱、偏撒娇，适当带表情符号和喵
+  2) 保持原文语义
 - 输出的 JSON 中，"translations" 的 "neko" 键对应"猫娘语"版本
 {{ end }}
 
@@ -110,8 +110,8 @@ func (tm *TemplateManager) loadDefaultTemplates() error {
 {{ if contains .TargetLanguageCodes "neko" }}
 重要补充（当目标包含"猫娘语"时适用）：
 - "猫娘语"的要求：
-  1) 语气可爱、偏撒娇
-  2) 保持原文语义与信息完整，不要添加无关内容或剧情
+  1) 语气可爱、偏撒娇，适当带表情符号和喵
+  2) 保持原文语义
 - 输出的 JSON 中，"translations" 的 "neko" 键对应"猫娘语"版本
 {{ end }}
 
