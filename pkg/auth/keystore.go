@@ -150,16 +150,9 @@ func (store *APIKeyStore) ListKeys() []string {
 func (store *APIKeyStore) createDefaultKeyFile(filePath string) error {
 	// 创建默认密钥
 	defaultKeys := map[string]APIKeyConfig{
-		"dev-key-123": {
-			ID:                "dev-user",
-			Description:       "Development key",
-			RequestsPerMinute: 100,
-			Enabled:           true,
-			CreatedAt:         time.Now().Format(time.RFC3339),
-		},
-		"lls-jm1Rg2Bt6HgCrDkzMou5Lu4t": {
-			ID:                "enterprise-backend",
-			Description:       "Enterprise backend key",
+		"lingualink-demo-key": {
+			ID:                "default-user",
+			Description:       "Default unlimited key",
 			RequestsPerMinute: -1, // 无限制
 			Enabled:           true,
 			CreatedAt:         time.Now().Format(time.RFC3339),

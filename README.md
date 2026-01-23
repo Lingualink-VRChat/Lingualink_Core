@@ -143,7 +143,7 @@ docker-compose up lingualink-core
 
 #### API Key 认证
 ```bash
-curl -H "X-API-Key: dev-key-123" http://localhost:8080/api/v1/process
+curl -H "X-API-Key: lingualink-demo-key" http://localhost:8080/api/v1/process
 ```
 
 #### Bearer Token 认证
@@ -242,9 +242,9 @@ auth:
       enabled: true
       config:
         keys:
-          dev-key-123:
-            id: dev-user
-            requests_per_minute: 100
+          lingualink-demo-key:
+            id: default-user
+            requests_per_minute: -1
 ```
 
 ### LLM 后端配置

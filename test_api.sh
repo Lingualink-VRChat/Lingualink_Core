@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Lingualink Core API 测试脚本
-API_KEY="lls-jm1Rg2Bt6HgCrDkzMou5Lu4t"
+API_KEY="lingualink-demo-key"
 BASE_URL="http://localhost:8100/api/v1"
 AUDIO_FILE="test/test.opus"
 
