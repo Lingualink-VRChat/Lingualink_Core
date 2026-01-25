@@ -1,11 +1,16 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -63,16 +68,16 @@ type BackendProvider struct {
 
 // LLMParameters LLM模型参数配置
 type LLMParameters struct {
-	Temperature        *float64 `mapstructure:"temperature"`
-	MaxTokens          *int     `mapstructure:"max_tokens"`
-	TopP               *float64 `mapstructure:"top_p"`
-	TopK               *int     `mapstructure:"top_k"`
-	RepetitionPenalty  *float64 `mapstructure:"repetition_penalty"`
-	FrequencyPenalty   *float64 `mapstructure:"frequency_penalty"`
-	PresencePenalty    *float64 `mapstructure:"presence_penalty"`
-	Stop               []string `mapstructure:"stop"`
-	Seed               *int     `mapstructure:"seed"`
-	Stream             *bool    `mapstructure:"stream"`
+	Temperature       *float64 `mapstructure:"temperature"`
+	MaxTokens         *int     `mapstructure:"max_tokens"`
+	TopP              *float64 `mapstructure:"top_p"`
+	TopK              *int     `mapstructure:"top_k"`
+	RepetitionPenalty *float64 `mapstructure:"repetition_penalty"`
+	FrequencyPenalty  *float64 `mapstructure:"frequency_penalty"`
+	PresencePenalty   *float64 `mapstructure:"presence_penalty"`
+	Stop              []string `mapstructure:"stop"`
+	Seed              *int     `mapstructure:"seed"`
+	Stream            *bool    `mapstructure:"stream"`
 }
 
 // PromptConfig 提示词配置
@@ -116,6 +121,46 @@ type LoggingConfig struct {
 	Format string `mapstructure:"format"`
 }
 
+func (c *Config) Validate() error {
+	var errs []error
+
+	if c.Server.Port < 1 || c.Server.Port > 65535 {
+		errs = append(errs, fmt.Errorf("invalid server port: %d", c.Server.Port))
+	}
+
+	if len(c.Backends.Providers) == 0 {
+		errs = append(errs, fmt.Errorf("no backend providers configured"))
+	}
+
+	for _, provider := range c.Backends.Providers {
+		if provider.Name == "" {
+			errs = append(errs, fmt.Errorf("backend: missing name"))
+		}
+		if provider.Type == "" {
+			errs = append(errs, fmt.Errorf("backend %s: missing type", provider.Name))
+		}
+		if provider.URL == "" {
+			errs = append(errs, fmt.Errorf("backend %s: missing URL", provider.Name))
+			continue
+		}
+		if _, err := url.ParseRequestURI(provider.URL); err != nil {
+			errs = append(errs, fmt.Errorf("backend %s: invalid URL: %v", provider.Name, err))
+		}
+	}
+
+	enabledStrategies := 0
+	for _, strategy := range c.Auth.Strategies {
+		if strategy.Enabled {
+			enabledStrategies++
+		}
+	}
+	if enabledStrategies == 0 {
+		errs = append(errs, fmt.Errorf("no auth strategies enabled"))
+	}
+
+	return errors.Join(errs...)
+}
+
 // Load 加载配置
 func Load() (*Config, error) {
 	// --- Step 1: Setup user config reader ---
@@ -123,32 +168,56 @@ func Load() (*Config, error) {
 	userViper.SetEnvPrefix("LINGUALINK")
 	userViper.AutomaticEnv()
 
+	configDir := GetConfigDir()
+
 	// Set paths for user config
 	if configFile := os.Getenv("LINGUALINK_CONFIG_FILE"); configFile != "" {
 		userViper.SetConfigFile(configFile)
+		configDir = filepath.Dir(configFile)
 		log.Printf("Using config file from environment variable: %s", configFile)
+
+		if err := userViper.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("failed to read user config: %w", err)
+		}
 	} else {
-		configDir := GetConfigDir()
 		userViper.SetConfigName("config")
 		userViper.SetConfigType("yaml")
 		userViper.AddConfigPath(configDir)
 		userViper.AddConfigPath(".")
 		log.Printf("Using default config file search in: %s", configDir)
-	}
 
-	// --- Step 2: Read user config ---
-	if err := userViper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("failed to read user config: %w", err)
+		// --- Step 2: Read user config ---
+		if err := userViper.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("failed to read user config: %w", err)
+			}
+			log.Println("User config file not found, using defaults.")
 		}
-		log.Println("User config file not found, using defaults.")
 	}
 
+	return loadFromUserViper(userViper, configDir)
+}
+
+// LoadFromFile loads the configuration from an explicit file path.
+func LoadFromFile(path string) (*Config, error) {
+	userViper := viper.New()
+	userViper.SetEnvPrefix("LINGUALINK")
+	userViper.AutomaticEnv()
+	userViper.SetConfigFile(path)
+
+	if err := userViper.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read user config: %w", err)
+	}
+
+	return loadFromUserViper(userViper, filepath.Dir(path))
+}
+
+func loadFromUserViper(userViper *viper.Viper, configDir string) (*Config, error) {
 	// --- Step 3: Determine the final Viper instance based on strategy ---
 	finalViper := viper.New()
 	finalViper.SetEnvPrefix("LINGUALINK")
 	finalViper.AutomaticEnv()
-	setDefaults() // Set defaults on the final viper instance first
+	setDefaults(finalViper) // Set defaults on the final viper instance first
 
 	// Get strategy from user config, default to "merge"
 	langStrategy := userViper.GetString("prompt.language_management_strategy")
@@ -159,7 +228,7 @@ func Load() (*Config, error) {
 
 	// If merge, load defaults first
 	if langStrategy == "merge" {
-		defaultLangFile := filepath.Join(GetConfigDir(), "languages.default.yaml")
+		defaultLangFile := filepath.Join(configDir, "languages.default.yaml")
 		if _, err := os.Stat(defaultLangFile); err == nil {
 			defaultLangViper := viper.New()
 			defaultLangViper.SetConfigFile(defaultLangFile)
@@ -189,18 +258,22 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
 }
 
 // setDefaults 设置默认值
-func setDefaults() {
+func setDefaults(v *viper.Viper) {
 	// 服务器默认配置
-	viper.SetDefault("server.mode", "development")
-	viper.SetDefault("server.port", 8080)
-	viper.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.mode", "development")
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.host", "0.0.0.0")
 
 	// 认证默认配置
-	viper.SetDefault("auth.strategies", []map[string]interface{}{
+	v.SetDefault("auth.strategies", []map[string]interface{}{
 		{
 			"type":    "api_key",
 			"enabled": true,
@@ -208,8 +281,8 @@ func setDefaults() {
 	})
 
 	// 后端默认配置
-	viper.SetDefault("backends.load_balancer.strategy", "round_robin")
-	viper.SetDefault("backends.providers", []map[string]interface{}{
+	v.SetDefault("backends.load_balancer.strategy", "round_robin")
+	v.SetDefault("backends.providers", []map[string]interface{}{
 		{
 			"name":  "default",
 			"type":  "openai",
@@ -219,15 +292,15 @@ func setDefaults() {
 	})
 
 	// 提示词默认配置
-	viper.SetDefault("prompt.defaults.task", "translate")
-	viper.SetDefault("prompt.defaults.target_languages", []string{"en", "ja", "zh"})
-	viper.SetDefault("prompt.language_management_strategy", "merge")
+	v.SetDefault("prompt.defaults.task", "translate")
+	v.SetDefault("prompt.defaults.target_languages", []string{"en", "ja", "zh"})
+	v.SetDefault("prompt.language_management_strategy", "merge")
 
 	// 语言配置现在从外部文件加载，不再在这里设置默认值
 
 	// 日志默认配置
-	viper.SetDefault("logging.level", "info")
-	viper.SetDefault("logging.format", "json")
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.format", "json")
 }
 
 // InitLogger 初始化日志
@@ -260,4 +333,84 @@ func GetConfigDir() string {
 	// 默认配置目录
 	wd, _ := os.Getwd()
 	return filepath.Join(wd, "config")
+}
+
+// ConfigWatcher watches a config file and reloads it on changes.
+type ConfigWatcher struct {
+	config   *Config
+	onChange func(*Config)
+	mu       sync.RWMutex
+	logger   *logrus.Logger
+}
+
+// NewConfigWatcher creates a watcher that reloads configuration when the given file changes.
+func NewConfigWatcher(cfg *Config, onChange func(*Config), logger *logrus.Logger) *ConfigWatcher {
+	return &ConfigWatcher{
+		config:   cfg,
+		onChange: onChange,
+		logger:   logger,
+	}
+}
+
+func (w *ConfigWatcher) Get() *Config {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.config
+}
+
+func (w *ConfigWatcher) Watch(path string) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	if err := watcher.Add(path); err != nil {
+		_ = watcher.Close()
+		return err
+	}
+
+	go func() {
+		defer watcher.Close()
+
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+					continue
+				}
+
+				// slight delay to avoid reading partially-written files
+				time.Sleep(50 * time.Millisecond)
+
+				cfg, err := LoadFromFile(path)
+				if err != nil {
+					if w.logger != nil {
+						w.logger.WithError(err).WithField("path", path).Warn("Failed to reload config")
+					}
+					continue
+				}
+
+				w.mu.Lock()
+				w.config = cfg
+				w.mu.Unlock()
+
+				if w.onChange != nil {
+					w.onChange(cfg)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				if w.logger != nil {
+					w.logger.WithError(err).WithField("path", path).Warn("Config watcher error")
+				}
+			}
+		}
+	}()
+
+	return nil
 }

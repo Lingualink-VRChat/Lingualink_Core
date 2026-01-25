@@ -1,11 +1,11 @@
 package middleware
 
 import (
-	"context"
 	"strings"
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/logging"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -35,6 +35,7 @@ func RequestID() gin.HandlerFunc {
 		if requestID == "" {
 			requestID = generateRequestID()
 		}
+		c.Request = c.Request.WithContext(logging.WithRequestID(c.Request.Context(), requestID))
 		c.Header("X-Request-ID", requestID)
 		c.Set("request_id", requestID)
 		c.Next()
@@ -72,7 +73,7 @@ func Logging(logger *logrus.Logger) gin.HandlerFunc {
 		})
 
 		if requestID, exists := c.Get("request_id"); exists {
-			entry = entry.WithField("request_id", requestID)
+			entry = entry.WithField(logging.FieldRequestID, requestID)
 		}
 
 		if len(c.Errors) > 0 {
@@ -105,12 +106,15 @@ func Metrics(collector metrics.MetricsCollector) gin.HandlerFunc {
 
 		collector.RecordLatency("http_request_duration", duration, tags)
 		collector.RecordCounter("http_requests_total", 1, tags)
+		metrics.ObserveHTTPRequest(method, path, status, duration)
 	})
 }
 
 // Auth 认证中间件
 func Auth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 	return gin.HandlerFunc(func(c *gin.Context) {
+		requestID, _ := logging.RequestIDFromContext(c.Request.Context())
+
 		// 提取认证信息
 		credentials := extractCredentials(c)
 
@@ -121,26 +125,38 @@ func Auth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 			if len(maskedKey) > 8 {
 				maskedKey = maskedKey[:8] + "***"
 			}
-			logrus.WithFields(logrus.Fields{
+			fields := logrus.Fields{
 				"api_key_prefix": maskedKey,
-				"type":          credentials.Type,
-				"path":          c.Request.URL.Path,
-			}).Debug("Attempting authentication")
+				"type":           credentials.Type,
+				"path":           c.Request.URL.Path,
+			}
+			if requestID != "" {
+				fields[logging.FieldRequestID] = requestID
+			}
+			logrus.WithFields(fields).Debug("Attempting authentication")
 		} else {
-			logrus.WithFields(logrus.Fields{
+			fields := logrus.Fields{
 				"path": c.Request.URL.Path,
 				"type": credentials.Type,
-			}).Debug("No API key provided")
+			}
+			if requestID != "" {
+				fields[logging.FieldRequestID] = requestID
+			}
+			logrus.WithFields(fields).Debug("No API key provided")
 		}
 
 		// 执行认证
-		identity, err := authenticator.Authenticate(context.Background(), credentials)
+		identity, err := authenticator.Authenticate(c.Request.Context(), credentials)
 		if err != nil {
-			logrus.WithFields(logrus.Fields{
+			fields := logrus.Fields{
 				"path":  c.Request.URL.Path,
 				"error": err.Error(),
 				"type":  credentials.Type,
-			}).Warn("Authentication failed")
+			}
+			if requestID != "" {
+				fields[logging.FieldRequestID] = requestID
+			}
+			logrus.WithFields(fields).Warn("Authentication failed")
 			c.JSON(401, gin.H{"error": "authentication failed"})
 			c.Abort()
 			return
@@ -148,10 +164,14 @@ func Auth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 
 		// 设置身份信息
 		c.Set("identity", identity)
-		logrus.WithFields(logrus.Fields{
-			"user_id": identity.ID,
-			"path":    c.Request.URL.Path,
-		}).Debug("Authentication successful")
+		fields := logrus.Fields{
+			logging.FieldUserID: identity.ID,
+			"path":              c.Request.URL.Path,
+		}
+		if requestID != "" {
+			fields[logging.FieldRequestID] = requestID
+		}
+		logrus.WithFields(fields).Debug("Authentication successful")
 		c.Next()
 	})
 }
@@ -168,11 +188,11 @@ func OptionalAuth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 		}
 
 		// 执行认证
-		identity, err := authenticator.Authenticate(context.Background(), credentials)
+		identity, err := authenticator.Authenticate(c.Request.Context(), credentials)
 		if err != nil {
 			// 认证失败时使用匿名身份
 			credentials.Type = "anonymous"
-			identity, _ = authenticator.Authenticate(context.Background(), credentials)
+			identity, _ = authenticator.Authenticate(c.Request.Context(), credentials)
 		}
 
 		// 设置身份信息

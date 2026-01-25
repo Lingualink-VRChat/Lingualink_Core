@@ -53,7 +53,7 @@ func (store *APIKeyStore) LoadFromFile(filePath string) error {
 	}
 
 	store.logger.Infof("Loaded %d API keys from %s", len(store.Keys), filePath)
-	
+
 	// 记录加载的密钥（掩码处理）
 	for key, config := range store.Keys {
 		if config.Enabled {
@@ -61,7 +61,7 @@ func (store *APIKeyStore) LoadFromFile(filePath string) error {
 			if len(maskedKey) > 8 {
 				maskedKey = maskedKey[:8] + "***"
 			}
-			store.logger.Infof("Loaded API key: %s for user: %s, rate limit: %d req/min", 
+			store.logger.Infof("Loaded API key: %s for user: %s, rate limit: %d req/min",
 				maskedKey, config.ID, config.RequestsPerMinute)
 		}
 	}
@@ -101,7 +101,11 @@ func (store *APIKeyStore) GetKey(apiKey string) (APIKeyConfig, bool) {
 	if config.ExpiresAt != "" {
 		expiryTime, err := time.Parse(time.RFC3339, config.ExpiresAt)
 		if err == nil && time.Now().After(expiryTime) {
-			store.logger.Warnf("API key expired: %s", apiKey[:8]+"***")
+			maskedKey := apiKey
+			if len(maskedKey) > 8 {
+				maskedKey = maskedKey[:8] + "***"
+			}
+			store.logger.Warnf("API key expired: %s", maskedKey)
 			return APIKeyConfig{}, false
 		}
 	}
@@ -160,7 +164,7 @@ func (store *APIKeyStore) createDefaultKeyFile(filePath string) error {
 	}
 
 	store.Keys = defaultKeys
-	
+
 	if err := store.SaveToFile(filePath); err != nil {
 		return err
 	}
@@ -183,4 +187,4 @@ func GetKeyFilePath() string {
 
 	// 最后的默认路径
 	return filepath.Join("config", "api_keys.json")
-} 
+}

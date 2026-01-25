@@ -14,6 +14,7 @@ import (
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/routes"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/cache"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/processing"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
@@ -51,9 +52,11 @@ func main() {
 	}
 
 	audioProcessor := audio.NewProcessor(llmManager, promptEngine, cfg.Prompt, logger, metricsCollector)
-	textProcessor := text.NewProcessor(llmManager, promptEngine, metricsCollector, cfg.Prompt, logger)
+	translationCache := cache.NewInMemoryCache(1000)
+	textProcessor := text.NewProcessorWithCache(llmManager, promptEngine, metricsCollector, cfg.Prompt, logger, translationCache, 5*time.Minute)
 	audioProcessingService := processing.NewService[audio.ProcessRequest, *audio.ProcessResponse](llmManager, promptEngine, logger)
 	textProcessingService := processing.NewService[text.ProcessRequest, *text.ProcessResponse](llmManager, promptEngine, logger)
+	statusStore := processing.NewInMemoryStatusStore(30 * time.Minute)
 
 	// 注册认证策略
 	for _, strategy := range cfg.Auth.Strategies {
@@ -73,7 +76,7 @@ func main() {
 	}
 
 	// 设置路由
-	router := setupRouter(authenticator, audioProcessor, textProcessor, audioProcessingService, textProcessingService, metricsCollector, logger)
+	router := setupRouter(cfg, llmManager, authenticator, audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, metricsCollector, logger)
 
 	// 创建HTTP服务器
 	server := &http.Server{
@@ -108,7 +111,7 @@ func main() {
 }
 
 // setupRouter 设置路由
-func setupRouter(authenticator *auth.MultiAuthenticator, audioProcessor *audio.Processor, textProcessor *text.Processor, audioProcessingService *processing.Service[audio.ProcessRequest, *audio.ProcessResponse], textProcessingService *processing.Service[text.ProcessRequest, *text.ProcessResponse], metricsCollector metrics.MetricsCollector, logger *logrus.Logger) *gin.Engine {
+func setupRouter(cfg *config.Config, llmManager *llm.Manager, authenticator *auth.MultiAuthenticator, audioProcessor *audio.Processor, textProcessor *text.Processor, audioProcessingService *processing.Service[audio.ProcessRequest, *audio.ProcessResponse], textProcessingService *processing.Service[text.ProcessRequest, *text.ProcessResponse], statusStore processing.StatusStore, metricsCollector metrics.MetricsCollector, logger *logrus.Logger) *gin.Engine {
 	// 创建Gin引擎
 	router := gin.New()
 
@@ -120,7 +123,7 @@ func setupRouter(authenticator *auth.MultiAuthenticator, audioProcessor *audio.P
 	router.Use(middleware.Recovery(logger))
 
 	// 创建处理器
-	handler := handlers.NewHandler(audioProcessor, textProcessor, audioProcessingService, textProcessingService, authenticator, logger, metricsCollector)
+	handler := handlers.NewHandler(audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, authenticator, logger, metricsCollector, cfg, llmManager)
 
 	// 注册路由
 	routes.RegisterRoutes(router, handler, authenticator)

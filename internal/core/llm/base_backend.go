@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -42,6 +43,18 @@ func NewBaseOpenAICompatibleBackend(name, baseURL, apiKey, model string, timeout
 
 // Process 处理请求 - 通用的OpenAI兼容实现
 func (b *BaseOpenAICompatibleBackend) Process(ctx context.Context, req *LLMRequest) (*LLMResponse, error) {
+	if len(req.Audio) > 0 {
+		fields := logrus.Fields{
+			logging.FieldAudioFormat: req.AudioFormat,
+			"audio_size":             len(req.Audio),
+			logging.FieldBackend:     b.name,
+		}
+		if requestID, ok := logging.RequestIDFromContext(ctx); ok {
+			fields[logging.FieldRequestID] = requestID
+		}
+		b.logger.WithFields(fields).Info("Sending audio request")
+	}
+
 	// 构建消息
 	messages := b.buildMessages(req)
 
@@ -133,12 +146,6 @@ func (b *BaseOpenAICompatibleBackend) buildMessages(req *LLMRequest) []map[strin
 	if len(req.Audio) > 0 {
 		// 构建带音频的用户消息
 		messages = append(messages, b.buildAudioMessage(req))
-		
-		b.logger.WithFields(logrus.Fields{
-			"audio_format": req.AudioFormat,
-			"audio_size":   len(req.Audio),
-			"backend":      b.name,
-		}).Info("Sending audio request")
 	} else {
 		// 纯文本消息
 		messages = append(messages, map[string]interface{}{

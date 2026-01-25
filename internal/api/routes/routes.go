@@ -4,15 +4,21 @@ import (
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/handlers"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/middleware"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/gin-gonic/gin"
 )
 
 // RegisterRoutes 注册所有路由
 func RegisterRoutes(router *gin.Engine, handler *handlers.Handler, authenticator *auth.MultiAuthenticator) {
+	router.GET("/metrics", gin.WrapH(metrics.PrometheusHandler()))
+
 	// 公开路由（无需认证）
 	public := router.Group("/api/v1")
 	{
+		public.GET("/live", handler.LivenessCheck)
+		public.GET("/ready", handler.ReadinessCheck)
 		public.GET("/health", handler.HealthCheck)
+		public.GET("/health/deep", handler.DeepHealthCheck)
 		public.GET("/capabilities", handler.GetCapabilities)
 		public.GET("/languages", handler.ListSupportedLanguages)
 	}
@@ -26,6 +32,7 @@ func RegisterRoutes(router *gin.Engine, handler *handlers.Handler, authenticator
 
 		// 文本处理 - 新增 process_text 端点
 		protected.POST("/process_text", handler.ProcessText)
+		protected.POST("/process_text_batch", handler.ProcessTextBatch)
 
 		// 异步处理状态查询
 		protected.GET("/status/:request_id", handler.GetProcessingStatus)

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -17,17 +18,19 @@ type Language struct {
 
 // LanguageManager 语言管理器
 type LanguageManager struct {
-	languages       map[string]*Language // 按短代码索引
-	languageNameMap map[string]string    // 中文显示名称到短代码的映射
-	logger          *logrus.Logger
+	languages  map[string]*Language // 按短代码索引
+	codeIndex  map[string]*Language // code(lowercase) -> language
+	aliasIndex map[string]*Language // alias/display/native/english(lowercase) -> language
+	logger     *logrus.Logger
 }
 
 // NewLanguageManager 创建语言管理器
 func NewLanguageManager(cfg config.PromptConfig, logger *logrus.Logger) *LanguageManager {
 	manager := &LanguageManager{
-		languages:       make(map[string]*Language),
-		languageNameMap: make(map[string]string),
-		logger:          logger,
+		languages:  make(map[string]*Language),
+		codeIndex:  make(map[string]*Language),
+		aliasIndex: make(map[string]*Language),
+		logger:     logger,
 	}
 
 	// 加载语言配置
@@ -39,9 +42,22 @@ func NewLanguageManager(cfg config.PromptConfig, logger *logrus.Logger) *Languag
 		}
 		manager.languages[lang.Code] = langDef
 
-		// 建立中文显示名称到短代码的映射
-		if displayName, ok := lang.Names["display"]; ok {
-			manager.languageNameMap[displayName] = lang.Code
+		if langDef.Code != "" {
+			manager.codeIndex[strings.ToLower(langDef.Code)] = langDef
+		}
+
+		// 建立别名索引（display/native/english/aliases）
+		for _, name := range langDef.Names {
+			normalized := strings.ToLower(strings.TrimSpace(name))
+			if normalized != "" {
+				manager.aliasIndex[normalized] = langDef
+			}
+		}
+		for _, alias := range langDef.Aliases {
+			normalized := strings.ToLower(strings.TrimSpace(alias))
+			if normalized != "" {
+				manager.aliasIndex[normalized] = langDef
+			}
 		}
 	}
 
@@ -65,7 +81,7 @@ func (lm *LanguageManager) ConvertCodesToDisplayNames(codes []string) ([]string,
 	for _, code := range codes {
 		normalizedCode, err := lm.NormalizeLanguage(code)
 		if err != nil {
-			return nil, fmt.Errorf("normalize language code %s: %w", code, err)
+			return nil, coreerrors.NewValidationError(fmt.Sprintf("normalize language code %s: %s", code, err.Error()), err)
 		}
 
 		if lang, ok := lm.languages[normalizedCode]; ok {
@@ -76,7 +92,7 @@ func (lm *LanguageManager) ConvertCodesToDisplayNames(codes []string) ([]string,
 				displayNames = append(displayNames, normalizedCode)
 			}
 		} else {
-			return nil, fmt.Errorf("language definition not found for code: %s", normalizedCode)
+			return nil, coreerrors.NewValidationError(fmt.Sprintf("language definition not found for code: %s", normalizedCode), nil)
 		}
 	}
 	return displayNames, nil
@@ -88,32 +104,20 @@ func (lm *LanguageManager) NormalizeLanguage(input string) (string, error) {
 
 	// 检查空字符串
 	if input == "" {
-		return "", fmt.Errorf("unknown language: %s", input)
+		return "", coreerrors.NewValidationError("unknown language", nil)
 	}
 
 	// 直接匹配语言代码
-	if lang, ok := lm.languages[input]; ok {
+	if lang, ok := lm.codeIndex[input]; ok {
 		return lang.Code, nil
 	}
 
 	// 别名匹配
-	for code, lang := range lm.languages {
-		// 检查display名称
-		if displayName, ok := lang.Names["display"]; ok {
-			if strings.EqualFold(input, displayName) {
-				return code, nil
-			}
-		}
-
-		// 检查别名
-		for _, alias := range lang.Aliases {
-			if strings.EqualFold(input, alias) {
-				return code, nil
-			}
-		}
+	if lang, ok := lm.aliasIndex[input]; ok {
+		return lang.Code, nil
 	}
 
-	return "", fmt.Errorf("unknown language: %s", input)
+	return "", coreerrors.NewValidationError(fmt.Sprintf("unknown language: %s", input), nil)
 }
 
 // IdentifyLanguageFromText 通过文本识别语言代码
@@ -163,7 +167,7 @@ func (lm *LanguageManager) IdentifyLanguageFromText(text string) (string, error)
 		}
 	}
 
-	return "", fmt.Errorf("no language identified for text: %s", text)
+	return "", coreerrors.NewValidationError(fmt.Sprintf("no language identified for text: %s", text), nil)
 }
 
 // BuildDynamicOutputRules 根据任务类型和目标语言动态构建OutputRules
@@ -187,7 +191,8 @@ func (lm *LanguageManager) BuildDynamicOutputRules(task TaskType, targetLanguage
 	}
 
 	for i, langCode := range targetLanguageCodes {
-		if lang, ok := lm.languages[langCode]; ok {
+		normalizedCode := strings.ToLower(strings.TrimSpace(langCode))
+		if lang, ok := lm.codeIndex[normalizedCode]; ok {
 			// 构建别名列表：包括display名称和所有配置的别名
 			aliases := make([]string, 0)
 

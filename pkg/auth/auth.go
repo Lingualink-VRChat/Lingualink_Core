@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -41,8 +45,11 @@ type Identity struct {
 type IdentityType string
 
 const (
-	IdentityTypeUser      IdentityType = "user"
-	IdentityTypeService   IdentityType = "service"
+	// IdentityTypeUser represents an end-user identity.
+	IdentityTypeUser IdentityType = "user"
+	// IdentityTypeService represents a service identity.
+	IdentityTypeService IdentityType = "service"
+	// IdentityTypeAnonymous represents an anonymous identity.
 	IdentityTypeAnonymous IdentityType = "anonymous"
 )
 
@@ -50,10 +57,14 @@ const (
 type Permission string
 
 const (
-	PermissionAudioProcess    Permission = "audio.process"
+	// PermissionAudioProcess allows access to audio processing endpoints.
+	PermissionAudioProcess Permission = "audio.process"
+	// PermissionAudioTranscribe allows access to audio transcription tasks.
 	PermissionAudioTranscribe Permission = "audio.transcribe"
-	PermissionAudioTranslate  Permission = "audio.translate"
-	PermissionHealthCheck     Permission = "health.check"
+	// PermissionAudioTranslate allows access to audio translation tasks.
+	PermissionAudioTranslate Permission = "audio.translate"
+	// PermissionHealthCheck allows access to health check endpoints.
+	PermissionHealthCheck Permission = "health.check"
 )
 
 // RateLimitConfig 限流配置
@@ -142,15 +153,15 @@ func (ma *MultiAuthenticator) detectAuthType(credentials Credentials) string {
 
 // APIKeyAuthenticator API密钥认证器
 type APIKeyAuthenticator struct {
-	keyStore  *APIKeyStore
-	logger    *logrus.Logger
+	keyStore *APIKeyStore
+	logger   *logrus.Logger
 }
 
 // NewAPIKeyAuthenticator 创建API密钥认证器
 func NewAPIKeyAuthenticator(config map[string]interface{}, logger *logrus.Logger) *APIKeyAuthenticator {
 	// 创建密钥存储
 	keyStore := NewAPIKeyStore(logger)
-	
+
 	// 从JSON文件加载密钥
 	keyFilePath := GetKeyFilePath()
 	if err := keyStore.LoadFromFile(keyFilePath); err != nil {
@@ -185,7 +196,7 @@ func (auth *APIKeyAuthenticator) Authenticate(ctx context.Context, credentials C
 		maskedKey = maskedKey[:8] + "***"
 	}
 	auth.logger.WithFields(map[string]interface{}{
-		"provided_key": maskedKey,
+		"provided_key":     maskedKey,
 		"valid_keys_count": len(auth.keyStore.Keys),
 	}).Debug("Checking API key")
 
@@ -196,7 +207,7 @@ func (auth *APIKeyAuthenticator) Authenticate(ctx context.Context, credentials C
 		validKeys := auth.keyStore.ListKeys()
 		auth.logger.WithFields(map[string]interface{}{
 			"provided_key": maskedKey,
-			"valid_keys": validKeys,
+			"valid_keys":   validKeys,
 		}).Warn("API key not found in valid keys")
 		return nil, ErrInvalidCredentials
 	}
@@ -315,8 +326,142 @@ func NewWebhookAuthenticator(endpoint string, config map[string]interface{}, log
 
 // Authenticate 认证
 func (auth *WebhookAuthenticator) Authenticate(ctx context.Context, credentials Credentials) (*Identity, error) {
-	// TODO: 实现Webhook认证逻辑
-	return nil, fmt.Errorf("webhook authentication not implemented")
+	if auth.endpoint == "" {
+		return nil, fmt.Errorf("webhook endpoint is required")
+	}
+
+	timeout := 5 * time.Second
+	if auth.config != nil {
+		if v, ok := auth.config["timeout_seconds"]; ok {
+			switch n := v.(type) {
+			case int:
+				timeout = time.Duration(n) * time.Second
+			case int64:
+				timeout = time.Duration(n) * time.Second
+			case float64:
+				timeout = time.Duration(n * float64(time.Second))
+			}
+		}
+		if v, ok := auth.config["timeout_ms"]; ok {
+			switch n := v.(type) {
+			case int:
+				timeout = time.Duration(n) * time.Millisecond
+			case int64:
+				timeout = time.Duration(n) * time.Millisecond
+			case float64:
+				timeout = time.Duration(n * float64(time.Millisecond))
+			}
+		}
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	reqBody, err := json.Marshal(credentials)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook credentials: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, auth.endpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("create webhook request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Optional custom headers from config.headers
+	if auth.config != nil {
+		if headers, ok := auth.config["headers"].(map[string]interface{}); ok {
+			for k, v := range headers {
+				if s, ok := v.(string); ok && s != "" {
+					req.Header.Set(k, s)
+				}
+			}
+		}
+	}
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send webhook request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read webhook response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		auth.logger.WithFields(logrus.Fields{
+			"status": resp.StatusCode,
+		}).Warn("Webhook authentication denied")
+		return nil, ErrUnauthorized
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		auth.logger.WithFields(logrus.Fields{
+			"status": resp.StatusCode,
+			"body":   string(respBody),
+		}).Warn("Webhook authentication failed")
+		return nil, fmt.Errorf("webhook auth failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	type webhookRateLimits struct {
+		RequestsPerMinute int         `json:"requests_per_minute"`
+		BurstSize         int         `json:"burst_size"`
+		WindowSize        interface{} `json:"window_size"`
+	}
+	type webhookIdentity struct {
+		ID          string                 `json:"id"`
+		ExternalID  string                 `json:"external_id"`
+		Type        IdentityType           `json:"type"`
+		Permissions []Permission           `json:"permissions"`
+		Metadata    map[string]interface{} `json:"metadata"`
+		RateLimits  *webhookRateLimits     `json:"rate_limits"`
+	}
+
+	var parsed webhookIdentity
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("unmarshal webhook identity: %w", err)
+	}
+
+	identity := &Identity{
+		ID:          parsed.ID,
+		ExternalID:  parsed.ExternalID,
+		Type:        parsed.Type,
+		Permissions: parsed.Permissions,
+		Metadata:    parsed.Metadata,
+	}
+	if identity.ID == "" {
+		return nil, fmt.Errorf("webhook response missing identity id")
+	}
+	if identity.Type == "" {
+		identity.Type = IdentityTypeUser
+	}
+
+	if parsed.RateLimits != nil {
+		window := time.Minute
+		switch v := parsed.RateLimits.WindowSize.(type) {
+		case string:
+			if d, err := time.ParseDuration(v); err == nil {
+				window = d
+			}
+		case float64:
+			// interpret as seconds
+			window = time.Duration(v * float64(time.Second))
+		case int:
+			window = time.Duration(v) * time.Second
+		case int64:
+			window = time.Duration(v) * time.Second
+		}
+
+		identity.RateLimits = &RateLimitConfig{
+			RequestsPerMinute: parsed.RateLimits.RequestsPerMinute,
+			BurstSize:         parsed.RateLimits.BurstSize,
+			WindowSize:        window,
+		}
+	}
+
+	return identity, nil
 }
 
 // GetType 获取认证器类型

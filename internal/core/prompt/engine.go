@@ -2,9 +2,12 @@ package prompt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
 
@@ -12,7 +15,9 @@ import (
 type TaskType string
 
 const (
-	TaskTranslate  TaskType = "translate"
+	// TaskTranslate indicates a translation task.
+	TaskTranslate TaskType = "translate"
+	// TaskTranscribe indicates a transcription task.
 	TaskTranscribe TaskType = "transcribe"
 	// 保留用于后续扩展
 	// TaskBoth       TaskType = "both"
@@ -22,10 +27,14 @@ const (
 type OutputFormat string
 
 const (
+	// FormatStructured indicates a structured output format.
 	FormatStructured OutputFormat = "structured"
-	FormatJSON       OutputFormat = "json"
-	FormatMarkdown   OutputFormat = "markdown"
-	FormatPlain      OutputFormat = "plain"
+	// FormatJSON indicates a JSON output format.
+	FormatJSON OutputFormat = "json"
+	// FormatMarkdown indicates a Markdown output format.
+	FormatMarkdown OutputFormat = "markdown"
+	// FormatPlain indicates a plain text output format.
+	FormatPlain OutputFormat = "plain"
 )
 
 // PromptRequest 提示词请求
@@ -112,11 +121,15 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 		if len(req.TargetLanguages) > 0 {
 			targetLanguageNames, err = e.languageManager.ConvertCodesToDisplayNames(req.TargetLanguages)
 			if err != nil {
-				return nil, fmt.Errorf("convert target language codes: %w", err)
+				var appErr *coreerrors.AppError
+				if errors.As(err, &appErr) {
+					return nil, appErr
+				}
+				return nil, coreerrors.NewValidationError("convert target language codes failed", err)
 			}
 		}
 	} else {
-		return nil, fmt.Errorf("unsupported task type: %s", req.Task)
+		return nil, coreerrors.NewValidationError(fmt.Sprintf("unsupported task type: %s", req.Task), nil)
 	}
 
 	// 准备模板数据
@@ -131,7 +144,7 @@ func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) 
 	// 使用对应的模板
 	prompt, _, err := e.templateManager.BuildPrompt(ctx, templateName, data)
 	if err != nil {
-		return nil, fmt.Errorf("build audio prompt: %w", err)
+		return nil, coreerrors.NewInternalError("build audio prompt failed", err)
 	}
 
 	// 动态生成OutputRules，音频处理总是包含源文本
@@ -152,7 +165,11 @@ func (e *Engine) BuildTextPrompt(ctx context.Context, req PromptRequest) (*Promp
 	// 将短代码转换为中文显示名称用于构建LLM prompt
 	targetLanguageNames, err := e.languageManager.ConvertCodesToDisplayNames(req.TargetLanguages)
 	if err != nil {
-		return nil, fmt.Errorf("convert target language codes: %w", err)
+		var appErr *coreerrors.AppError
+		if errors.As(err, &appErr) {
+			return nil, appErr
+		}
+		return nil, coreerrors.NewValidationError("convert target language codes failed", err)
 	}
 
 	// 准备模板数据
@@ -168,7 +185,7 @@ func (e *Engine) BuildTextPrompt(ctx context.Context, req PromptRequest) (*Promp
 	// 使用文本翻译模板
 	prompt, _, err := e.templateManager.BuildPrompt(ctx, "text_translate", data)
 	if err != nil {
-		return nil, fmt.Errorf("build text prompt: %w", err)
+		return nil, coreerrors.NewInternalError("build text prompt failed", err)
 	}
 
 	// 动态生成OutputRules，不包含源文本段落（因为文本翻译不需要转录）
@@ -188,16 +205,19 @@ func (e *Engine) ParseResponse(content string) (*ParsedResponse, error) {
 	// 只进行 JSON 块解析，失败时直接返回错误
 	jsonData, ok := extractJSONBlock(content)
 	if !ok {
+		metrics.ObserveJSONParseSuccess("json", false)
 		e.logger.WithField("content", content).Error("No JSON block found in LLM response")
-		return nil, fmt.Errorf("no json block found in response")
+		return nil, coreerrors.NewParsingError("no json block found in response", nil)
 	}
 
 	parsedResp, err := parseJSONResponse(jsonData)
 	if err != nil {
+		metrics.ObserveJSONParseSuccess("json", false)
 		e.logger.WithError(err).WithField("jsonData", string(jsonData)).Error("Failed to parse JSON response")
-		return nil, fmt.Errorf("invalid json in response: %w", err)
+		return nil, coreerrors.NewParsingError("invalid json in response", err)
 	}
 
+	metrics.ObserveJSONParseSuccess("json", true)
 	e.logger.WithFields(map[string]interface{}{
 		"parser":  "json",
 		"success": true,

@@ -2,10 +2,13 @@ package text
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/cache"
+	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
@@ -15,6 +18,14 @@ import (
 // ProcessRequest 文本处理请求
 type ProcessRequest struct {
 	Text            string                 `json:"text"`
+	SourceLanguage  string                 `json:"source_language,omitempty"`
+	TargetLanguages []string               `json:"target_languages"`
+	Options         map[string]interface{} `json:"options,omitempty"`
+}
+
+// BatchProcessRequest is the request payload for batch text translation.
+type BatchProcessRequest struct {
+	Texts           []string               `json:"texts"`
 	SourceLanguage  string                 `json:"source_language,omitempty"`
 	TargetLanguages []string               `json:"target_languages"`
 	Options         map[string]interface{} `json:"options,omitempty"`
@@ -36,6 +47,14 @@ type ProcessResponse struct {
 	Metadata       map[string]interface{} `json:"metadata"`
 }
 
+func (r *ProcessResponse) SetProcessingTime(seconds float64) {
+	r.ProcessingTime = seconds
+}
+
+func (r *ProcessResponse) SetRequestID(requestID string) {
+	r.RequestID = requestID
+}
+
 // Processor 文本处理器
 type Processor struct {
 	llmManager   *llm.Manager
@@ -43,6 +62,9 @@ type Processor struct {
 	metrics      metrics.MetricsCollector
 	config       config.PromptConfig
 	logger       *logrus.Logger
+
+	translationCache cache.TranslationCache
+	cacheTTL         time.Duration
 }
 
 // NewProcessor 创建文本处理器
@@ -53,12 +75,27 @@ func NewProcessor(
 	config config.PromptConfig,
 	logger *logrus.Logger,
 ) *Processor {
+	return NewProcessorWithCache(llmManager, promptEngine, metrics, config, logger, nil, 0)
+}
+
+// NewProcessorWithCache creates a text Processor with an optional translation cache.
+func NewProcessorWithCache(
+	llmManager *llm.Manager,
+	promptEngine *prompt.Engine,
+	metrics metrics.MetricsCollector,
+	config config.PromptConfig,
+	logger *logrus.Logger,
+	translationCache cache.TranslationCache,
+	cacheTTL time.Duration,
+) *Processor {
 	return &Processor{
-		llmManager:   llmManager,
-		promptEngine: promptEngine,
-		metrics:      metrics,
-		config:       config,
-		logger:       logger,
+		llmManager:       llmManager,
+		promptEngine:     promptEngine,
+		metrics:          metrics,
+		config:           config,
+		logger:           logger,
+		translationCache: translationCache,
+		cacheTTL:         cacheTTL,
 	}
 }
 
@@ -67,17 +104,20 @@ func NewProcessor(
 // Validate 验证请求 - 实现 LogicHandler 接口
 func (p *Processor) Validate(req ProcessRequest) error {
 	if req.Text == "" {
-		return fmt.Errorf("text is required")
+		return coreerrors.NewValidationError("text is required", nil)
 	}
 
 	// 验证文本长度限制（3000字符）
 	maxLength := 3000
 	if len(req.Text) > maxLength {
-		return fmt.Errorf("text length (%d characters) exceeds maximum allowed length (%d characters)", len(req.Text), maxLength)
+		return coreerrors.NewValidationError(
+			fmt.Sprintf("text length (%d characters) exceeds maximum allowed length (%d characters)", len(req.Text), maxLength),
+			nil,
+		)
 	}
 
 	if len(req.TargetLanguages) == 0 {
-		return fmt.Errorf("target languages are required")
+		return coreerrors.NewValidationError("target languages are required", nil)
 	}
 
 	return nil
@@ -103,7 +143,11 @@ func (p *Processor) BuildLLMRequest(ctx context.Context, req ProcessRequest) (*l
 
 	promptObj, err := p.promptEngine.BuildTextPrompt(ctx, promptReq)
 	if err != nil {
-		return nil, fmt.Errorf("build prompt: %w", err)
+		var appErr *coreerrors.AppError
+		if errors.As(err, &appErr) {
+			return nil, appErr
+		}
+		return nil, coreerrors.NewInternalError("build prompt failed", err)
 	}
 
 	// 4. 构建LLM请求
@@ -116,24 +160,75 @@ func (p *Processor) BuildLLMRequest(ctx context.Context, req ProcessRequest) (*l
 	return llmReq, nil
 }
 
+func (p *Processor) TryGetCachedResponse(ctx context.Context, req ProcessRequest) (*ProcessResponse, bool, error) {
+	if p.translationCache == nil || p.cacheTTL <= 0 {
+		return nil, false, nil
+	}
+
+	targetLangCodes := req.TargetLanguages
+	if len(targetLangCodes) == 0 {
+		targetLangCodes = p.config.Defaults.TargetLanguages
+	}
+
+	key := cache.GenerateCacheKey(req.Text, req.SourceLanguage, targetLangCodes)
+	cached, ok := p.translationCache.Get(key)
+	if !ok || cached == nil || len(cached.Translations) == 0 {
+		return nil, false, nil
+	}
+
+	resp := acquireProcessResponse()
+	resp.RequestID = generateRequestID()
+	resp.Status = "success"
+	resp.SourceText = req.Text
+	resp.RawResponse = ""
+	resp.ProcessingTime = 0
+	resp.Metadata["cache_hit"] = true
+	resp.Metadata["cached_at"] = cached.CachedAt.Unix()
+
+	for k, v := range cached.Translations {
+		resp.Translations[k] = v
+		metrics.IncTranslation(req.SourceLanguage, k)
+	}
+
+	return resp, true, nil
+}
+
+func (p *Processor) StoreCachedResponse(ctx context.Context, req ProcessRequest, resp *ProcessResponse) error {
+	if p.translationCache == nil || p.cacheTTL <= 0 {
+		return nil
+	}
+	if resp == nil || resp.Status != "success" || len(resp.Translations) == 0 {
+		return nil
+	}
+
+	targetLangCodes := req.TargetLanguages
+	if len(targetLangCodes) == 0 {
+		targetLangCodes = p.config.Defaults.TargetLanguages
+	}
+
+	key := cache.GenerateCacheKey(req.Text, req.SourceLanguage, targetLangCodes)
+	p.translationCache.Set(key, &cache.CachedTranslation{
+		Translations: resp.Translations,
+		CachedAt:     time.Now(),
+	}, p.cacheTTL)
+
+	return nil
+}
+
 // BuildSuccessResponse 构建成功响应 - 实现 LogicHandler 接口
 func (p *Processor) BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *prompt.ParsedResponse, req ProcessRequest) *ProcessResponse {
 	requestID := generateRequestID()
 
-	response := &ProcessResponse{
-		RequestID:      requestID,
-		Status:         "success",
-		SourceText:     req.Text,
-		RawResponse:    llmResp.Content,
-		ProcessingTime: 0, // 这将在 Service 中设置
-		Metadata: map[string]interface{}{
-			"model":         llmResp.Model,
-			"prompt_tokens": llmResp.PromptTokens,
-			"total_tokens":  llmResp.TotalTokens,
-			"backend":       llmResp.Metadata["backend"],
-		},
-		Translations: make(map[string]string),
-	}
+	response := acquireProcessResponse()
+	response.RequestID = requestID
+	response.Status = "success"
+	response.SourceText = req.Text
+	response.RawResponse = llmResp.Content
+	response.ProcessingTime = 0 // 这将在 Service 中设置
+	response.Metadata["model"] = llmResp.Model
+	response.Metadata["prompt_tokens"] = llmResp.PromptTokens
+	response.Metadata["total_tokens"] = llmResp.TotalTokens
+	response.Metadata["backend"] = llmResp.Metadata["backend"]
 
 	// 添加解析器信息到元数据
 	if parsedResp != nil && parsedResp.Metadata != nil {
@@ -164,6 +259,7 @@ func (p *Processor) BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *p
 			}
 			if isTargetLang {
 				response.Translations[langCode] = translationText
+				metrics.IncTranslation(req.SourceLanguage, langCode)
 			}
 		}
 	}
