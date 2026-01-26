@@ -1,40 +1,125 @@
-# Repository Guidelines
+# Lingualink Core - AI Agent Guidelines
 
-## Project Structure & Module Organization
-- `cmd/server`: HTTP entrypoint wiring config, middleware, handlers, and processors.
-- `cmd/cli`: Cobra utility (version/server/config/test verbs).
-- `internal/api`: Gin handlers, middleware, and route registration.
-- `internal/core`: Domain logic for audio, text, prompt, LLM backends, and processing services.
-- `pkg`: Shared utilities such as auth strategies and metrics collectors.
-- `config`: Runtime configuration (`config.yaml`, `api_keys.json`) plus templates; prefer config over code changes.
-- `docs` and `README.md`: Reference docs; `test/` holds sample audio fixtures.
+> 这是给 AI Coding Assistant (Codex/Claude) 的精简指南。人类开发者请参考 `/docs` 目录。
 
-## Build, Test, and Development Commands
-- `./start_local.sh`: Local dev (Go 1.25.4) reading `config/config.yaml` and `api_keys.json`.
-- `go build ./cmd/server ./cmd/cli`: Build the HTTP server and CLI.
-- `go test ./...`: Run unit tests (add `_test.go` coverage as you contribute).
-- `./test_api.sh`: Smoke-test endpoints against a running instance using sample OPUS audio.
-- Production: `docker-compose up -d lingualink-core` (reads `docker-compose.yml` and mounts `./config`/`./logs`).
+## 核心架构
 
-## Coding Style & Naming Conventions
-- Go 1.25.4+. Format all changes with `gofmt` before committing; keep imports goimports-friendly ordering.
-- Package, file, and directory names stay lowercase with underscores only when needed (Go style).
-- Keep handlers thin; place business logic in `internal/core/*` and reusable helpers in `pkg/*`.
-- Log with `logrus` and prefer structured fields over string concatenation.
-- Keep config-driven behaviors in `config` structs instead of hard-coded constants.
+```
+请求 → API Handler → Pipeline Executor → Tool Chain → 响应
+                           ↓
+              Tool Registry (asr, correct, translate, correct_translate)
+```
 
-## Testing Guidelines
-- Prefer table-driven tests in `_test.go` files; co-locate with the package under test.
-- Stub external calls (LLM/backend) and exercise processors and handlers with representative payloads.
-- Seed sample audio from `test/` when validating audio flows; avoid embedding new large fixtures in git.
-- Aim for coverage on new logic paths; ensure `go test ./...` passes before opening PRs.
+**关键设计决策**:
+- 所有处理通过 `Tool` + `Pipeline` 编排
+- Tool 是最小可执行单元，实现 `tool.Tool` 接口
+- Pipeline 是 Tool 的有序组合，定义在 `pipeline/predefined.go`
 
-## Auth & Access
-- Default API key is `lingualink-demo-key` in `config/api_keys.json`; it is unlimited and should be sent via `X-API-Key`.
-- For production, swap in your own key file and keep the anonymous strategy disabled unless intentionally exposing open endpoints.
+## 目录结构 (重点)
 
-## Commit & Pull Request Guidelines
-- Follow concise, action-led commit subjects (e.g., `Add prompt engine config validation`); recent history favors clear verbs over ticket prefixes.
-- Each PR should include: purpose summary, key changes, and any config/env toggles. Link related issues where applicable.
-- Include screenshots or example responses for API-affecting changes. Note breaking changes and migration steps explicitly.
-- Before requesting review, rerun `gofmt`, `go test ./...`, and, if applicable, `./test_api.sh`; ensure configs do not leak real keys or secrets.
+| 路径 | 职责 | 修改频率 |
+|------|------|---------|
+| `internal/core/tool/` | Tool 实现 (asr, translate, correct) | 高 |
+| `internal/core/pipeline/` | Pipeline 定义和执行器 | 中 |
+| `internal/core/prompt/` | Prompt 模板和语言配置 | 中 |
+| `internal/core/llm/` | LLM 后端管理、Tool Calling | 低 |
+| `internal/core/asr/` | ASR 后端 (Whisper) | 低 |
+| `internal/api/handlers/` | HTTP handlers | 中 |
+| `config/` | YAML/JSON 配置 | 优先改配置 |
+
+## 快速命令
+
+```bash
+# 开发
+./manage.sh start|stop|restart|status|logs
+go test ./...
+gofmt -w .
+
+# 测试 API
+curl -s http://localhost:8080/api/v1/health | jq
+./test_api.sh
+```
+
+## Pipeline 选择逻辑
+
+```
+process_audio:
+  task=transcribe:
+    correction.enabled=true  → transcribe_correct (ASR → Correct)
+    correction.enabled=false → transcribe (ASR only)
+  task=translate:
+    correction.merge=true    → translate_merged (ASR → CorrectTranslate)
+    correction.merge=false   → translate_split (ASR → Correct → Translate)
+```
+
+## Tool 接口规范
+
+```go
+type Tool interface {
+    Name() string                                           // 唯一标识
+    Description() string                                    // LLM tool calling 描述
+    Schema() map[string]interface{}                         // 输入 JSON Schema
+    OutputSchema() map[string]interface{}                   // 输出 Schema (LLM tools)
+    Validate(input Input) error                             // 输入验证
+    Execute(ctx context.Context, input Input) (Output, error) // 执行
+}
+```
+
+## 配置优先级
+
+```
+环境变量 > config/config.yaml > 代码默认值
+```
+
+**常用环境变量**:
+- `LINGUALINK_CONFIG_FILE`: 配置文件路径
+- `LINGUALINK_KEYS_FILE`: API 密钥文件路径
+- `SERVER_PORT`: 服务端口
+
+## 添加新功能的模式
+
+### 添加新 Tool
+1. 在 `internal/core/tool/` 创建 `xxx_tool.go`
+2. 实现 `Tool` 接口
+3. 在 `cmd/server/main.go` 注册到 Registry
+
+### 添加新 Pipeline
+1. 在 `pipeline/predefined.go` 添加函数
+2. 在 `audio/processor.go` 的 `selectPipeline()` 添加选择逻辑
+
+### 添加新语言
+1. 编辑 `config/config.yaml` 的 `prompt.languages`
+2. 无需改代码
+
+## 关键文件位置
+
+| 需求 | 文件 |
+|------|------|
+| 修改 API 响应格式 | `audio/processor.go`, `text/processor.go` |
+| 修改 Prompt 模板 | `prompt/template.go` |
+| 添加 LLM 参数 | `llm/types.go`, `llm/base_backend.go` |
+| 修改认证逻辑 | `pkg/auth/auth.go` |
+| 添加指标 | `pkg/metrics/metrics.go` |
+
+## 测试约定
+
+- 单元测试: `xxx_test.go` 同目录
+- 集成测试: `internal/testutil/integrationtest/`
+- 测试音频: `test/test.opus`, `test/test.wav`
+- Mock 模式: 设置 `h.llmManager = nil` 会触发配置错误
+
+## 常见错误处理
+
+| 错误码 | 含义 | 处理 |
+|--------|------|------|
+| `ErrCodeValidation` | 400 请求无效 | 检查必填字段 |
+| `ErrCodeAuth` | 401 认证失败 | 检查 X-API-Key |
+| `ErrCodeLLM` | 502 LLM 错误 | 检查后端健康 |
+| `ErrCodeParsing` | 502 解析失败 | 检查 Prompt/响应格式 |
+
+## 架构文档
+
+详细设计请参考:
+- `docs/architecture.md` - 系统架构
+- `docs/configuration.md` - 配置详解
+- `docs/api.md` - API 参考

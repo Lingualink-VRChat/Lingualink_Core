@@ -33,8 +33,9 @@ X-API-Key: your-api-key-here
 
 ### 支持的音频格式
 
+当前服务端校验支持以下格式：
+
 - WAV, MP3, M4A, OPUS, FLAC
-- AAC, WMA, OGG, AMR, 3GP
 
 音频数据需要 Base64 编码后传输。
 
@@ -161,7 +162,7 @@ curl -X POST "http://localhost:8080/api/v1/process_audio" \
 **响应** (200 OK):
 ```json
 {
-    "request_id": "req_1721836201123456789",
+    "request_id": "req_20260126123456_ab12cd",
     "status": "success",
     "transcription": "你好",
     "translations": {
@@ -170,13 +171,16 @@ curl -X POST "http://localhost:8080/api/v1/process_audio" \
     },
     "processing_time": 1.85,
     "metadata": {
-        "backend": "default",
-        "model": "qwenOmni7",
+        "pipeline": "translate",
         "conversion_applied": true,
         "original_format": "opus",
         "processed_format": "wav",
-        "parser": "json",
-        "parse_success": true
+        "step_durations_ms": {
+            "asr_result": 410,
+            "translate_result": 920
+        },
+        "backend": "default",
+        "model": "qwenOmni7"
     }
 }
 ```
@@ -198,19 +202,21 @@ curl -X POST "http://localhost:8080/api/v1/process_audio" \
 **响应** (200 OK):
 ```json
 {
-    "request_id": "req_1721836202234567890",
+    "request_id": "req_20260126123456_ef34gh",
     "status": "success",
     "transcription": "这是一个纯转录测试。",
     "translations": {},
     "processing_time": 1.23,
     "metadata": {
-        "backend": "default",
-        "model": "qwenOmni7",
+        "pipeline": "transcribe",
         "conversion_applied": false,
         "original_format": "wav",
         "processed_format": "wav",
-        "parser": "json",
-        "parse_success": true
+        "step_durations_ms": {
+            "asr_result": 480
+        },
+        "backend": "default",
+        "model": "qwenOmni7"
     }
 }
 ```
@@ -245,7 +251,7 @@ curl -X POST "http://localhost:8080/api/v1/process_text" \
 **响应示例** (200 OK):
 ```json
 {
-    "request_id": "txt_1721836501123456789",
+    "request_id": "req_20260126123456_ij56kl",
     "status": "success",
     "source_text": "Lingualink is a powerful translation core.",
     "translations": {
@@ -256,9 +262,62 @@ curl -X POST "http://localhost:8080/api/v1/process_text" \
     "metadata": {
         "backend": "default",
         "model": "qwenOmni7",
-        "parser": "json",
-        "parse_success": true
+        "pipeline": "text_translate",
+        "step_durations_ms": {
+            "translate_result": 120
+        }
     }
+}
+```
+
+---
+
+### `POST /process_text_batch`
+
+对多段文本执行批量翻译。
+
+**认证**: 需要 (`X-API-Key`)
+
+**请求体字段**:
+
+| 字段 | 类型 | 必须 | 说明 |
+|-----|------|-----|------|
+| `texts` | string[] | **是** | 要翻译的文本数组（最多 20 条）|
+| `target_languages` | string[] | **是** | 目标语言代码数组 |
+| `source_language` | string | 否 | 源文本语言代码 |
+
+**响应示例** (200 OK):
+```json
+{
+    "request_id": "req_20260126123456_mn78op",
+    "results": [
+        {
+            "request_id": "req_20260126123456_mn78op",
+            "status": "success",
+            "source_text": "你好",
+            "translations": { "en": "Hello" },
+            "processing_time": 0.12,
+            "metadata": { "pipeline": "text_translate" }
+        }
+    ],
+    "count": 1
+}
+```
+
+---
+
+### `GET /status/:request_id`
+
+查询异步处理状态（当前用于请求状态跟踪）。
+
+**认证**: 需要 (`X-API-Key`)
+
+**响应示例** (200 OK):
+```json
+{
+    "status": "completed",
+    "progress": 100,
+    "message": "Processing completed"
 }
 ```
 
@@ -291,7 +350,8 @@ curl -X POST "http://localhost:8080/api/v1/process_text" \
 **错误响应格式**:
 ```json
 {
-    "error": "error message description"
+    "error": "error message description",
+    "code": "validation"
 }
 ```
 
@@ -314,8 +374,8 @@ curl -X POST "http://localhost:8080/api/v1/process_text" \
 |-----|------|------|
 | `backend` | string | 使用的 LLM 后端名称 |
 | `model` | string | 使用的模型名称 |
-| `parser` | string | 使用的解析器 (`"json"`) |
-| `parse_success` | boolean | 解析是否成功 |
+| `pipeline` | string | 使用的处理流水线名称 |
+| `step_durations_ms` | object | 各 pipeline step 耗时（毫秒） |
 | `conversion_applied` | boolean | 是否应用了音频格式转换 |
 | `original_format` | string | 原始音频格式 |
 | `processed_format` | string | 处理后的音频格式 |

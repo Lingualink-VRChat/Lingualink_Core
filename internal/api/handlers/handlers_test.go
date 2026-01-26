@@ -464,6 +464,16 @@ func TestProcessText_Success(t *testing.T) {
 	if !ok || requestID == "" {
 		t.Fatalf("missing request_id: %v", out["request_id"])
 	}
+	metadata, ok := out["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing metadata: %v", out["metadata"])
+	}
+	if metadata["pipeline"] != "text_translate" {
+		t.Fatalf("metadata.pipeline=%v want text_translate", metadata["pipeline"])
+	}
+	if _, ok := metadata["step_durations_ms"].(map[string]interface{}); !ok {
+		t.Fatalf("metadata.step_durations_ms=%v want object", metadata["step_durations_ms"])
+	}
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/status/"+requestID, nil)
 	statusReq.Header.Set("X-API-Key", "user-key")
@@ -495,6 +505,19 @@ func TestProcessTextBatch_Success(t *testing.T) {
 	results, ok := out["results"].([]interface{})
 	if !ok || len(results) != 2 {
 		t.Fatalf("results=%v want 2 items", out["results"])
+	}
+	for i, item := range results {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			t.Fatalf("results[%d]=%T want object", i, item)
+		}
+		metadata, ok := m["metadata"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("results[%d].metadata=%v want object", i, m["metadata"])
+		}
+		if metadata["pipeline"] != "text_translate" {
+			t.Fatalf("results[%d].metadata.pipeline=%v want text_translate", i, metadata["pipeline"])
+		}
 	}
 	if out["count"].(float64) != 2 {
 		t.Fatalf("count=%v want 2", out["count"])

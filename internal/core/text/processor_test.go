@@ -112,61 +112,6 @@ func TestProcessor_Validate_NoTargets(t *testing.T) {
 	}
 }
 
-func TestProcessor_BuildLLMRequest(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
-	llmReq, err := p.BuildLLMRequest(context.Background(), ProcessRequest{
-		Text:            "你好",
-		TargetLanguages: []string{"en"},
-	})
-	if err != nil {
-		t.Fatalf("BuildLLMRequest: %v", err)
-	}
-	if llmReq.SystemPrompt == "" || llmReq.UserPrompt == "" {
-		t.Fatalf("expected non-empty prompts")
-	}
-	if !strings.Contains(llmReq.UserPrompt, "你好") {
-		t.Fatalf("expected user prompt to include source text, got: %q", llmReq.UserPrompt)
-	}
-}
-
-func TestProcessor_BuildSuccessResponse(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
-
-	llmResp := &llm.LLMResponse{
-		Content:      "raw",
-		Model:        "m",
-		PromptTokens: 1,
-		TotalTokens:  2,
-		Metadata:     map[string]interface{}{"backend": "b"},
-	}
-	parsed := &prompt.ParsedResponse{
-		Sections: map[string]string{
-			"en": "hello",
-			"ja": "こんにちは",
-		},
-		Metadata: map[string]interface{}{
-			"parser":        "json",
-			"parse_success": true,
-		},
-	}
-
-	resp := p.BuildSuccessResponse(llmResp, parsed, ProcessRequest{
-		Text:            "你好",
-		TargetLanguages: []string{"en"},
-	})
-
-	if resp.Translations["en"] != "hello" {
-		t.Fatalf("en=%q want hello", resp.Translations["en"])
-	}
-	if _, ok := resp.Translations["ja"]; ok {
-		t.Fatalf("did not expect ja translation")
-	}
-}
-
 func TestProcessor_TranslationCache_HitAvoidsLLM(t *testing.T) {
 	var calls atomic.Int64
 
@@ -219,6 +164,12 @@ func TestProcessor_TranslationCache_HitAvoidsLLM(t *testing.T) {
 	if resp1.Translations["en"] != "y" {
 		t.Fatalf("expected en translation, got %q", resp1.Translations["en"])
 	}
+	if resp1.Metadata["pipeline"] == "" {
+		t.Fatalf("expected pipeline metadata")
+	}
+	if _, ok := resp1.Metadata["step_durations_ms"].(map[string]int64); !ok {
+		t.Fatalf("expected step_durations_ms metadata")
+	}
 	if calls.Load() != 1 {
 		t.Fatalf("calls=%d want 1", calls.Load())
 	}
@@ -235,5 +186,8 @@ func TestProcessor_TranslationCache_HitAvoidsLLM(t *testing.T) {
 	}
 	if hit, _ := resp2.Metadata["cache_hit"].(bool); !hit {
 		t.Fatalf("expected cache_hit=true")
+	}
+	if resp2.Metadata["pipeline"] != "text_translate" {
+		t.Fatalf("pipeline=%v want text_translate", resp2.Metadata["pipeline"])
 	}
 }

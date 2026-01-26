@@ -25,6 +25,12 @@ type LogicHandler[T ProcessableRequest, R any] interface {
 	BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *prompt.ParsedResponse, req T) R
 }
 
+// Handler defines the minimum contract required by Service.Process.
+// Implementations can optionally also implement LogicHandler, directProcessor, and responseCacheHandler.
+type Handler[T ProcessableRequest, R any] interface {
+	Validate(req T) error
+}
+
 // processingTimeSetter 可选接口：如果响应类型支持，将由 Service 写入处理耗时（秒）。
 type processingTimeSetter interface {
 	SetProcessingTime(seconds float64)
@@ -60,7 +66,7 @@ func NewService[T ProcessableRequest, R any](llmManager *llm.Manager, promptEngi
 }
 
 // Process 执行通用处理流程
-func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler[T, R]) (R, error) {
+func (s *Service[T, R]) Process(ctx context.Context, req T, handler Handler[T, R]) (R, error) {
 	startTime := time.Now()
 	var emptyResponse R
 	if cleaner, ok := any(req).(requestCleaner); ok {
@@ -120,7 +126,12 @@ func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler
 	}
 
 	// 2. 构建LLM请求
-	llmReq, err := handler.BuildLLMRequest(ctx, req)
+	logicHandler, ok := any(handler).(LogicHandler[T, R])
+	if !ok {
+		return emptyResponse, coreerrors.NewInternalError("handler does not support LLM processing", nil)
+	}
+
+	llmReq, err := logicHandler.BuildLLMRequest(ctx, req)
 	if err != nil {
 		return emptyResponse, ensureAppError(err, coreerrors.ErrCodeInternal, "failed to build LLM request")
 	}
@@ -147,7 +158,7 @@ func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler
 	}
 
 	// 5. 构建成功响应
-	response := handler.BuildSuccessResponse(llmResp, parsed, req)
+	response := logicHandler.BuildSuccessResponse(llmResp, parsed, req)
 
 	processingTimeSec := time.Since(startTime).Seconds()
 	if setter, ok := any(response).(processingTimeSetter); ok {

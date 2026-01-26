@@ -54,33 +54,117 @@ auth:
   strategies:
     - type: api_key
       enabled: true
+      config: {}
+    - type: anonymous
+      enabled: false
       config:
-        keys_file: config/api_keys.json
+        requests_per_minute: 10
 ```
 
 #### API Key 认证
 
-API Key 从 JSON 文件加载，文件格式：
+启用 `api_key` 策略后，系统会从 JSON 文件加载密钥。密钥文件路径通过以下方式确定（按优先级）：
+
+1. 环境变量 `LINGUALINK_KEYS_FILE`
+2. 环境变量 `LINGUALINK_CONFIG_DIR` + `/api_keys.json`
+3. 默认路径 `config/api_keys.json`
+
+密钥文件格式（`config/api_keys.json`）：
 
 ```json
 {
   "keys": {
     "lingualink-demo-key": {
       "id": "default-user",
-      "requests_per_minute": -1
+      "description": "Default unlimited key",
+      "requests_per_minute": -1,
+      "enabled": true,
+      "created_at": "2025-06-02T13:37:00Z"
     },
     "production-key-xxx": {
       "id": "prod-user",
-      "requests_per_minute": 100
+      "requests_per_minute": 100,
+      "enabled": true,
+      "expires_at": "2026-12-31T23:59:59Z"
     }
   }
 }
 ```
 
-| 字段 | 说明 |
-|-----|------|
-| `id` | 用户标识符 |
-| `requests_per_minute` | 每分钟请求限制，-1 表示无限制 |
+| 字段 | 类型 | 说明 |
+|-----|------|------|
+| `id` | string | 用户标识符 |
+| `description` | string | 密钥描述（可选）|
+| `requests_per_minute` | int | 每分钟请求限制，-1 表示无限制 |
+| `enabled` | bool | 是否启用此密钥 |
+| `created_at` | string | 创建时间（RFC3339 格式，可选）|
+| `expires_at` | string | 过期时间（RFC3339 格式，可选）|
+
+---
+
+### ASR 配置 (asr)
+
+用于音频转写（Whisper/OpenAI 兼容 API）：
+
+```yaml
+asr:
+  providers:
+    - name: default
+      type: whisper
+      url: http://localhost:8000/v1
+      model: whisper-1
+      api_key: "sk-asr-xxx"
+      parameters:
+        response_format: json
+        temperature: 0.0
+        language: "" # 留空自动检测
+```
+
+| 字段 | 类型 | 必须 | 说明 |
+|-----|------|-----|------|
+| `name` | string | **是** | ASR 后端名称（唯一标识）|
+| `type` | string | **是** | 后端类型（例如 `whisper`）|
+| `url` | string | **是** | API 端点 URL |
+| `model` | string | **是** | 模型名称 |
+| `api_key` | string | 否 | API 密钥（如果后端需要）|
+| `parameters` | object | 否 | 额外参数（会透传到 ASR 请求）|
+
+---
+
+### 纠错配置 (correction)
+
+用于音频/文本翻译前的可选纠错步骤：
+
+```yaml
+correction:
+  enabled: true
+  merge_with_translation: true
+  global_dictionary: []
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|-----|------|-------|------|
+| `enabled` | bool | `true` | 是否启用纠错 |
+| `merge_with_translation` | bool | `true` | 是否将纠错与翻译合并为一次 LLM 调用 |
+| `global_dictionary` | array | `[]` | 全局术语表（可选）|
+
+---
+
+### Pipeline 配置 (pipeline)
+
+控制 Tool Use（Function Calling）行为：
+
+```yaml
+pipeline:
+  tool_calling:
+    enabled: true
+    allow_thinking: false
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|-----|------|-------|------|
+| `tool_calling.enabled` | bool | `true` | 是否启用 Tool Calling（否则使用 JSON 块输出）|
+| `tool_calling.allow_thinking` | bool | `false` | 是否允许模型在 tool call 前输出解释文本 |
 
 ---
 
@@ -141,26 +225,42 @@ backends:
 
 ### LLM 参数配置
 
-详细的 LLM 参数配置说明见 [llm-parameters.md](./llm-parameters.md)。
+LLM 模型参数可以在配置文件中设置默认值，也可以在API请求中动态覆盖。
 
 #### 基础参数
 
 | 参数 | 类型 | 范围 | 说明 |
 |-----|------|-----|------|
-| `temperature` | float | 0.0-2.0 | 输出随机性，0.0 完全确定性 |
-| `max_tokens` | int | - | 最大输出 token 数 |
+| `temperature` | float | 0.0-2.0 | 输出随机性，0.0 完全确定性，默认 0.7 |
+| `max_tokens` | int | - | 最大输出 token 数，默认 1000 |
 | `top_p` | float | 0.0-1.0 | 核采样参数 |
+| `stream` | bool | - | 是否启用流式输出，默认 false |
 
 #### 高级参数
 
-| 参数 | 类型 | 说明 |
-|-----|------|------|
-| `top_k` | int | Top-K 采样（VLLM 支持）|
-| `repetition_penalty` | float | 重复惩罚（开源模型）|
-| `frequency_penalty` | float | 频率惩罚（OpenAI）|
-| `presence_penalty` | float | 存在惩罚（OpenAI）|
-| `stop` | string[] | 停止词列表 |
-| `seed` | int | 随机种子 |
+| 参数 | 类型 | 范围 | 说明 |
+|-----|------|------|------|
+| `top_k` | int | - | Top-K 采样（VLLM/开源模型支持）|
+| `repetition_penalty` | float | 0.0-2.0 | 重复惩罚，1.0 无惩罚（开源模型）|
+| `frequency_penalty` | float | -2.0-2.0 | 频率惩罚（OpenAI）|
+| `presence_penalty` | float | -2.0-2.0 | 存在惩罚（OpenAI）|
+| `stop` | string[] | - | 停止词列表 |
+| `seed` | int | - | 随机种子，用于可重复输出 |
+
+#### 模型兼容性
+
+| 参数 | OpenAI | VLLM | 其他 OpenAI 兼容 |
+|------|--------|------|------------------|
+| temperature | ✅ | ✅ | ✅ |
+| max_tokens | ✅ | ✅ | ✅ |
+| top_p | ✅ | ✅ | ✅ |
+| top_k | ❌ | ✅ | 取决于实现 |
+| repetition_penalty | ❌ | ✅ | 取决于实现 |
+| frequency_penalty | ✅ | ❌ | 取决于实现 |
+| presence_penalty | ✅ | ❌ | 取决于实现 |
+| stop | ✅ | ✅ | ✅ |
+| seed | ✅ | ✅ | 取决于实现 |
+| stream | ✅ | ✅ | ✅ |
 
 #### 推荐配置
 
@@ -179,6 +279,22 @@ parameters:
   max_tokens: 2000
   top_p: 0.95
 ```
+
+**对话聊天**:
+```yaml
+parameters:
+  temperature: 0.7
+  max_tokens: 1000
+  top_p: 0.9
+  stream: true
+```
+
+#### 最佳实践
+
+1. **根据用途调整 temperature**：精确任务 0.1-0.3，平衡任务 0.5-0.8，创意任务 0.8-1.2
+2. **合理设置 max_tokens**：根据预期输出长度设置，避免过大导致不必要的计算
+3. **使用 seed 确保可重现性**：测试调试时使用固定种子
+4. **根据模型选择参数**：OpenAI 用 frequency/presence_penalty，开源模型用 repetition_penalty
 
 ---
 
@@ -221,21 +337,27 @@ prompt:
 
 ---
 
-### 音频处理配置 (audio)
+#### 解析配置 (prompt.parsing)
 
 ```yaml
-audio:
-  max_size: 33554432           # 最大文件大小（字节），32MB
-  supported_formats:
-    - wav
-    - mp3
-    - m4a
-    - opus
-    - flac
-  conversion:
-    enabled: true              # 启用 FFmpeg 转换
-    target_format: wav         # 目标格式
-    sample_rate: 16000         # 采样率
+prompt:
+  parsing:
+    separators: [":", "：", "-", "—"]
+    strict_mode: false
+    validation:
+      required_sections: []
+      min_content_length: 1
+      max_content_length: 3000
+```
+
+---
+
+### 日志配置 (logging)
+
+```yaml
+logging:
+  level: info   # debug/info/warn/error
+  format: json  # json/text
 ```
 
 ---
@@ -244,18 +366,23 @@ audio:
 
 可以使用环境变量覆盖配置文件中的值：
 
-| 环境变量 | 对应配置 |
-|---------|---------|
-| `SERVER_PORT` | `server.port` |
-| `SERVER_MODE` | `server.mode` |
-| `VLLM_SERVER_URL` | `backends.providers[0].url` |
-| `MODEL_NAME` | `backends.providers[0].model` |
-| `API_KEY` | `backends.providers[0].api_key` |
+环境变量前缀为 `LINGUALINK_`，并使用 `_` 映射配置键中的 `.`（例如 `server.port` → `LINGUALINK_SERVER_PORT`）。
+对于复杂结构（例如 `backends.providers` 列表），建议直接修改 `config.yaml`。
+
+常用环境变量：
+
+| 环境变量 | 说明 |
+|---------|------|
+| `LINGUALINK_CONFIG_DIR` | 配置目录（默认 `./config`）|
+| `LINGUALINK_CONFIG_FILE` | 指定 `config.yaml` 的绝对/相对路径 |
+| `LINGUALINK_KEYS_FILE` | 指定 `api_keys.json` 的绝对/相对路径 |
+| `LINGUALINK_SERVER_MODE` | 覆盖 `server.mode` |
+| `LINGUALINK_SERVER_PORT` | 覆盖 `server.port` |
+| `LINGUALINK_SERVER_HOST` | 覆盖 `server.host` |
 
 **使用示例**:
 ```bash
-export SERVER_PORT=8100
-export VLLM_SERVER_URL=http://localhost:8000/v1
+export LINGUALINK_SERVER_PORT=8100
 ./start_local.sh
 ```
 

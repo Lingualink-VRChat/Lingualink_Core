@@ -2,9 +2,7 @@ package text
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
@@ -12,7 +10,10 @@ import (
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/correction"
 	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/pipeline"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/tool"
+	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/logging"
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/metrics"
 	"github.com/sirupsen/logrus"
 )
@@ -67,6 +68,9 @@ type Processor struct {
 	metrics      metrics.MetricsCollector
 	config       config.PromptConfig
 	correction   config.CorrectionConfig
+	pipelineCfg  config.PipelineConfig
+	toolRegistry *tool.Registry
+	pipelineExec *pipeline.Executor
 	logger       *logrus.Logger
 
 	translationCache cache.TranslationCache
@@ -95,11 +99,17 @@ func NewProcessorWithCache(
 	cacheTTL time.Duration,
 ) *Processor {
 	return &Processor{
-		llmManager:       llmManager,
-		promptEngine:     promptEngine,
-		metrics:          metrics,
-		config:           promptCfg,
-		correction:       config.CorrectionConfig{},
+		llmManager:   llmManager,
+		promptEngine: promptEngine,
+		metrics:      metrics,
+		config:       promptCfg,
+		correction:   config.CorrectionConfig{},
+		pipelineCfg: config.PipelineConfig{
+			ToolCalling: config.ToolCallingConfig{
+				Enabled:       true,
+				AllowThinking: false,
+			},
+		},
 		logger:           logger,
 		translationCache: translationCache,
 		cacheTTL:         cacheTTL,
@@ -112,7 +122,41 @@ func (p *Processor) WithCorrectionConfig(cfg config.CorrectionConfig) *Processor
 	return p
 }
 
+// WithPipelineConfig configures pipeline execution behavior.
+func (p *Processor) WithPipelineConfig(cfg config.PipelineConfig) *Processor {
+	p.pipelineCfg = cfg
+	// Lazily rebuilt on first use to honor the latest tool_calling flags.
+	p.toolRegistry = nil
+	p.pipelineExec = nil
+	return p
+}
+
 // Process 方法已移除 - 现在使用 ProcessingService 统一处理流程
+
+func (p *Processor) ensurePipelineInitialized() error {
+	if p.pipelineExec != nil && p.toolRegistry != nil {
+		return nil
+	}
+
+	reg := tool.NewRegistry()
+
+	toolCallingEnabled := p.pipelineCfg.ToolCalling.Enabled
+	allowThinking := p.pipelineCfg.ToolCalling.AllowThinking
+
+	if err := reg.Register(tool.NewTextCorrectTool(p.llmManager, p.promptEngine, toolCallingEnabled, allowThinking)); err != nil {
+		return err
+	}
+	if err := reg.Register(tool.NewTextTranslateTool(p.llmManager, p.promptEngine, toolCallingEnabled, allowThinking)); err != nil {
+		return err
+	}
+	if err := reg.Register(tool.NewTextCorrectTranslateTool(p.llmManager, p.promptEngine, toolCallingEnabled, allowThinking)); err != nil {
+		return err
+	}
+
+	p.toolRegistry = reg
+	p.pipelineExec = pipeline.NewExecutor(reg)
+	return nil
+}
 
 // Validate 验证请求 - 实现 LogicHandler 接口
 func (p *Processor) Validate(req ProcessRequest) error {
@@ -141,67 +185,6 @@ func (p *Processor) Validate(req ProcessRequest) error {
 	}
 
 	return nil
-}
-
-// BuildLLMRequest 构建LLM请求 - 实现 LogicHandler 接口
-func (p *Processor) BuildLLMRequest(ctx context.Context, req ProcessRequest) (*llm.LLMRequest, error) {
-	task := req.Task
-	if task == "" {
-		task = prompt.TaskTranslate
-	}
-
-	// 2. 处理目标语言
-	targetLangCodes := req.TargetLanguages
-	if task == prompt.TaskTranslate && len(targetLangCodes) == 0 {
-		targetLangCodes = p.config.Defaults.TargetLanguages
-	}
-
-	dictionary := correction.MergeDictionaries(p.correction.GlobalDictionary, req.UserDictionary)
-
-	var promptObj *prompt.Prompt
-	var err error
-	switch task {
-	case prompt.TaskTranslate:
-		if p.correction.Enabled && !p.correction.MergeWithTranslation {
-			return nil, coreerrors.NewInternalError("separated correction+translation should be handled by direct processing", nil)
-		}
-
-		if p.correction.Enabled && p.correction.MergeWithTranslation {
-			promptObj, err = p.promptEngine.BuildTextCorrectTranslatePrompt(ctx, req.Text, targetLangCodes, dictionary)
-		} else {
-			promptObj, err = p.promptEngine.BuildTextPrompt(ctx, prompt.PromptRequest{
-				Task:            prompt.TaskTranslate,
-				SourceLanguage:  req.SourceLanguage,
-				TargetLanguages: targetLangCodes,
-				Variables: map[string]interface{}{
-					"source_text": req.Text,
-				},
-			})
-		}
-	case prompt.TaskTranscribe:
-		if !p.correction.Enabled {
-			return nil, coreerrors.NewInternalError("transcribe without correction should be handled by direct processing", nil)
-		}
-		promptObj, err = p.promptEngine.BuildTextCorrectPrompt(ctx, req.Text, dictionary)
-	default:
-		return nil, coreerrors.NewValidationError(fmt.Sprintf("unsupported task type: %s", task), nil)
-	}
-	if err != nil {
-		var appErr *coreerrors.AppError
-		if errors.As(err, &appErr) {
-			return nil, appErr
-		}
-		return nil, coreerrors.NewInternalError("build prompt failed", err)
-	}
-
-	// 4. 构建LLM请求
-	llmReq := &llm.LLMRequest{
-		SystemPrompt: promptObj.System,
-		UserPrompt:   promptObj.User,
-		Options:      req.Options,
-	}
-
-	return llmReq, nil
 }
 
 func (p *Processor) TryGetCachedResponse(ctx context.Context, req ProcessRequest) (*ProcessResponse, bool, error) {
@@ -235,6 +218,8 @@ func (p *Processor) TryGetCachedResponse(ctx context.Context, req ProcessRequest
 	resp.ProcessingTime = 0
 	resp.Metadata["cache_hit"] = true
 	resp.Metadata["cached_at"] = cached.CachedAt.Unix()
+	resp.Metadata["pipeline"] = pipeline.PipelineTextTranslate
+	resp.Metadata["step_durations_ms"] = map[string]int64{"cache": 0}
 
 	for k, v := range cached.Translations {
 		resp.Translations[k] = v
@@ -273,160 +258,170 @@ func (p *Processor) StoreCachedResponse(ctx context.Context, req ProcessRequest,
 	return nil
 }
 
-// BuildSuccessResponse 构建成功响应 - 实现 LogicHandler 接口
-func (p *Processor) BuildSuccessResponse(llmResp *llm.LLMResponse, parsedResp *prompt.ParsedResponse, req ProcessRequest) *ProcessResponse {
-	requestID := generateRequestID()
-
-	response := acquireProcessResponse()
-	response.RequestID = requestID
-	response.Status = "success"
-	response.SourceText = req.Text
-	response.RawResponse = llmResp.Content
-	response.ProcessingTime = 0 // 这将在 Service 中设置
-	response.Metadata["model"] = llmResp.Model
-	response.Metadata["prompt_tokens"] = llmResp.PromptTokens
-	response.Metadata["total_tokens"] = llmResp.TotalTokens
-	response.Metadata["backend"] = llmResp.Metadata["backend"]
-	response.CorrectedText = ""
-
-	// 添加解析器信息到元数据
-	if parsedResp != nil && parsedResp.Metadata != nil {
-		if parser, ok := parsedResp.Metadata["parser"]; ok {
-			response.Metadata["parser"] = parser
-		}
-		if parseSuccess, ok := parsedResp.Metadata["parse_success"]; ok {
-			response.Metadata["parse_success"] = parseSuccess
-		}
-	}
-
-	// 如果解析失败，标记为部分成功
-	if parsedResp == nil || parsedResp.Metadata["parse_error"] != nil {
-		response.Status = "partial_success"
-	}
-
-	task := req.Task
-	if task == "" {
-		task = prompt.TaskTranslate
-	}
-	if parsedResp != nil && parsedResp.CorrectedText != "" {
-		response.CorrectedText = parsedResp.CorrectedText
-	}
-
-	// 7. 提取翻译结果
-	if task == prompt.TaskTranslate {
-		targetLangCodes := req.TargetLanguages
-		if len(targetLangCodes) == 0 {
-			targetLangCodes = p.config.Defaults.TargetLanguages
-		}
-		if parsedResp != nil {
-			for _, targetCode := range targetLangCodes {
-				if translationText, ok := parsedResp.Sections[targetCode]; ok && translationText != "" {
-					response.Translations[targetCode] = translationText
-					metrics.IncTranslation(req.SourceLanguage, targetCode)
-				}
-			}
-		}
-	}
-
-	return response
-}
-
 // ProcessDirect optionally handles requests that don't fit the single-call ProcessingService flow.
 func (p *Processor) ProcessDirect(ctx context.Context, req ProcessRequest) (*ProcessResponse, bool, error) {
-	task := req.Task
-	if task == "" {
-		task = prompt.TaskTranslate
+	resp, err := p.processWithPipeline(ctx, req)
+	if err != nil {
+		return nil, true, err
 	}
-
-	if task == prompt.TaskTranscribe && !p.correction.Enabled {
-		resp := acquireProcessResponse()
-		resp.RequestID = generateRequestID()
-		resp.Status = "success"
-		resp.SourceText = req.Text
-		resp.CorrectedText = req.Text
-		resp.RawResponse = ""
-		return resp, true, nil
-	}
-
-	if task == prompt.TaskTranslate && p.correction.Enabled && !p.correction.MergeWithTranslation {
-		if p.llmManager == nil {
-			return nil, true, coreerrors.NewInternalError("llm manager not configured", nil)
-		}
-		targetLangCodes := req.TargetLanguages
-		if len(targetLangCodes) == 0 {
-			targetLangCodes = p.config.Defaults.TargetLanguages
-		}
-		dictionary := correction.MergeDictionaries(p.correction.GlobalDictionary, req.UserDictionary)
-
-		correctPrompt, err := p.promptEngine.BuildTextCorrectPrompt(ctx, req.Text, dictionary)
-		if err != nil {
-			return nil, true, err
-		}
-		correctResp, err := p.llmManager.ProcessWithTimeout(ctx, &llm.LLMRequest{
-			SystemPrompt: correctPrompt.System,
-			UserPrompt:   correctPrompt.User,
-			Options:      req.Options,
-		})
-		if err != nil {
-			return nil, true, err
-		}
-		parsedCorrect, err := p.promptEngine.ParseResponse(correctResp.Content)
-		if err != nil {
-			return nil, true, err
-		}
-		correctedText := strings.TrimSpace(parsedCorrect.CorrectedText)
-		if correctedText == "" {
-			correctedText = strings.TrimSpace(req.Text)
-		}
-
-		translatePrompt, err := p.promptEngine.BuildTextPrompt(ctx, prompt.PromptRequest{
-			Task:            prompt.TaskTranslate,
-			SourceLanguage:  req.SourceLanguage,
-			TargetLanguages: targetLangCodes,
-			Variables: map[string]interface{}{
-				"source_text": correctedText,
-			},
-		})
-		if err != nil {
-			return nil, true, err
-		}
-		translateResp, err := p.llmManager.ProcessWithTimeout(ctx, &llm.LLMRequest{
-			SystemPrompt: translatePrompt.System,
-			UserPrompt:   translatePrompt.User,
-			Options:      req.Options,
-		})
-		if err != nil {
-			return nil, true, err
-		}
-		parsedTranslate, err := p.promptEngine.ParseResponse(translateResp.Content)
-		if err != nil {
-			return nil, true, err
-		}
-
-		resp := acquireProcessResponse()
-		resp.RequestID = generateRequestID()
-		resp.Status = "success"
-		resp.SourceText = req.Text
-		resp.CorrectedText = correctedText
-		resp.RawResponse = translateResp.Content
-		resp.Metadata["correction_backend"] = correctResp.Metadata["backend"]
-		resp.Metadata["translation_backend"] = translateResp.Metadata["backend"]
-		resp.Metadata["raw_correction_response"] = correctResp.Content
-		for _, code := range targetLangCodes {
-			if v, ok := parsedTranslate.Sections[code]; ok && v != "" {
-				resp.Translations[code] = v
-				metrics.IncTranslation(req.SourceLanguage, code)
-			}
-		}
-		return resp, true, nil
-	}
-
-	return nil, false, nil
+	return resp, true, nil
 }
 
 // generateRequestID 生成请求ID
 func generateRequestID() string {
 	return fmt.Sprintf("txt_%d", time.Now().UnixNano())
+}
+
+func (p *Processor) processWithPipeline(ctx context.Context, req ProcessRequest) (*ProcessResponse, error) {
+	requestID, _ := logging.RequestIDFromContext(ctx)
+
+	if err := p.ensurePipelineInitialized(); err != nil {
+		return nil, err
+	}
+
+	task := req.Task
+	if task == "" {
+		task = prompt.TaskTranslate
+	}
+
+	targetLangCodes := req.TargetLanguages
+	if task == prompt.TaskTranslate && len(targetLangCodes) == 0 {
+		targetLangCodes = p.config.Defaults.TargetLanguages
+	}
+
+	dictionary := correction.MergeDictionaries(p.correction.GlobalDictionary, req.UserDictionary)
+
+	var selected pipeline.Pipeline
+	switch task {
+	case prompt.TaskTranslate:
+		if p.correction.Enabled {
+			if p.correction.MergeWithTranslation {
+				selected = pipeline.TextCorrectTranslate()
+			} else {
+				selected = pipeline.TextCorrectThenTranslate()
+			}
+		} else {
+			selected = pipeline.TextTranslate()
+		}
+	case prompt.TaskTranscribe:
+		if p.correction.Enabled {
+			selected = pipeline.TextCorrect()
+		} else {
+			selected = pipeline.TextPassthrough()
+		}
+	default:
+		return nil, coreerrors.NewValidationError(fmt.Sprintf("unsupported task type: %s", task), nil)
+	}
+
+	pctx := &tool.PipelineContext{
+		RequestID: requestID,
+		OriginalRequest: map[string]interface{}{
+			"text":             req.Text,
+			"source_language":  req.SourceLanguage,
+			"target_languages": targetLangCodes,
+			"task":             string(task),
+			"options":          req.Options,
+		},
+		Dictionary: dictionary,
+	}
+
+	outCtx, err := p.pipelineExec.Execute(ctx, selected, pctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := acquireProcessResponse()
+	resp.RequestID = generateRequestID()
+	resp.Status = "success"
+	resp.SourceText = req.Text
+	resp.Metadata["pipeline"] = selected.Name
+
+	stepDurations := make(map[string]int64)
+	for k, d := range outCtx.Metrics {
+		stepDurations[k] = d.Milliseconds()
+	}
+	resp.Metadata["step_durations_ms"] = stepDurations
+
+	switch selected.Name {
+	case pipeline.PipelineTextPassthrough:
+		resp.CorrectedText = req.Text
+	case pipeline.PipelineTextCorrect:
+		correctOut := outCtx.StepOutputs["correct_result"]
+		if v, ok := correctOut.Data["corrected_text"].(string); ok {
+			resp.CorrectedText = v
+		}
+		if v, ok := correctOut.Data["raw_response"].(string); ok {
+			resp.RawResponse = v
+		}
+		for k, v := range correctOut.Metadata {
+			resp.Metadata[k] = v
+		}
+	case pipeline.PipelineTextCorrectTranslate:
+		ctOut := outCtx.StepOutputs["correct_translate_result"]
+		if v, ok := ctOut.Data["corrected_text"].(string); ok {
+			resp.CorrectedText = v
+		}
+		if v, ok := ctOut.Data["raw_response"].(string); ok {
+			resp.RawResponse = v
+		}
+		if translations, ok := ctOut.Data["translations"].(map[string]string); ok {
+			for k, v := range translations {
+				resp.Translations[k] = v
+			}
+		}
+		for k, v := range ctOut.Metadata {
+			resp.Metadata[k] = v
+		}
+	case pipeline.PipelineTextTranslate:
+		trOut := outCtx.StepOutputs["translate_result"]
+		if v, ok := trOut.Data["raw_response"].(string); ok {
+			resp.RawResponse = v
+		}
+		if translations, ok := trOut.Data["translations"].(map[string]string); ok {
+			for k, v := range translations {
+				resp.Translations[k] = v
+			}
+		}
+		for k, v := range trOut.Metadata {
+			resp.Metadata[k] = v
+		}
+	case pipeline.PipelineTextCorrectThenTranslate:
+		correctOut := outCtx.StepOutputs["correct_result"]
+		translateOut := outCtx.StepOutputs["translate_result"]
+
+		if v, ok := correctOut.Data["corrected_text"].(string); ok {
+			resp.CorrectedText = v
+		}
+		if v, ok := translateOut.Data["raw_response"].(string); ok {
+			resp.RawResponse = v
+		}
+		if translations, ok := translateOut.Data["translations"].(map[string]string); ok {
+			for k, v := range translations {
+				resp.Translations[k] = v
+			}
+		}
+
+		resp.Metadata["correction_backend"] = correctOut.Metadata["backend"]
+		resp.Metadata["translation_backend"] = translateOut.Metadata["backend"]
+		resp.Metadata["raw_correction_response"] = correctOut.Data["raw_response"]
+
+		for k, v := range translateOut.Metadata {
+			resp.Metadata[k] = v
+		}
+	default:
+		return nil, coreerrors.NewInternalError(fmt.Sprintf("unknown pipeline: %s", selected.Name), nil)
+	}
+
+	if task == prompt.TaskTranslate {
+		if len(resp.Translations) == 0 {
+			resp.Status = "partial_success"
+		}
+		for code := range resp.Translations {
+			metrics.IncTranslation(req.SourceLanguage, code)
+		}
+	}
+
+	return resp, nil
 }
 
 // GetCapabilities 获取文本处理能力
