@@ -72,7 +72,6 @@ Lingualink_Core/
 ├── config/              # 配置文件
 │   ├── config.template.yaml     # 配置模板
 │   ├── api_keys.template.json   # API 密钥模板
-│   └── languages.default.yaml   # 默认语言配置
 ├── test/                # 测试资源
 │   ├── test.opus
 │   ├── test.wav

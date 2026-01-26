@@ -21,6 +21,7 @@ func parseJSONResponse(jsonData []byte) (*ParsedResponse, error) {
 	var parsed struct {
 		Transcription string            `json:"transcription"`
 		SourceText    string            `json:"source_text"`
+		CorrectedText string            `json:"corrected_text"`
 		Translations  map[string]string `json:"translations"`
 	}
 
@@ -29,16 +30,6 @@ func parseJSONResponse(jsonData []byte) (*ParsedResponse, error) {
 	}
 
 	sections := make(map[string]string)
-
-	// 处理转录或原文
-	if parsed.Transcription != "" {
-		sections["原文"] = parsed.Transcription
-	}
-	if parsed.SourceText != "" {
-		sections["原文"] = parsed.SourceText // 文本翻译场景
-	}
-
-	// 处理翻译结果
 	for langCode, translation := range parsed.Translations {
 		if translation != "" {
 			sections[langCode] = translation
@@ -46,8 +37,11 @@ func parseJSONResponse(jsonData []byte) (*ParsedResponse, error) {
 	}
 
 	return &ParsedResponse{
-		RawText:  string(jsonData),
-		Sections: sections,
+		RawText:       string(jsonData),
+		Sections:      sections,
+		Transcription: parsed.Transcription,
+		SourceText:    parsed.SourceText,
+		CorrectedText: parsed.CorrectedText,
 		Metadata: map[string]interface{}{
 			"parser":        "json",
 			"parse_success": true,

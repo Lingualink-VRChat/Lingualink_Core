@@ -1,11 +1,18 @@
 package audio
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/asr"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/prompt"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/testutil"
@@ -47,25 +54,230 @@ func newTestPromptConfig() config.PromptConfig {
 	}
 }
 
-func newTestProcessor(t *testing.T) *Processor {
+func newTestASRManager(t *testing.T, text string) *asr.Manager {
 	t.Helper()
 
+	asrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		case "/v1/audio/transcriptions":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"language": "zh",
+				"duration": 1.0,
+				"text":     text,
+			})
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(asrSrv.Close)
+
 	logger := testutil.NewTestLogger()
-	cfg := newTestPromptConfig()
-	engine, err := prompt.NewEngine(cfg, logger)
+	m, err := asr.NewManager(config.ASRConfig{
+		Providers: []config.ASRProvider{
+			{
+				Name:  "asr1",
+				Type:  "whisper",
+				URL:   asrSrv.URL + "/v1",
+				Model: "whisper-1",
+			},
+		},
+	}, logger)
 	if err != nil {
-		t.Fatalf("NewEngine: %v", err)
+		t.Fatalf("asr.NewManager: %v", err)
+	}
+	return m
+}
+
+func TestProcessor_ProcessDirect_Transcribe_NoCorrection(t *testing.T) {
+	t.Parallel()
+
+	logger := testutil.NewTestLogger()
+	promptCfg := newTestPromptConfig()
+	engine, err := prompt.NewEngine(promptCfg, logger)
+	if err != nil {
+		t.Fatalf("prompt.NewEngine: %v", err)
 	}
 
-	return NewProcessor(nil, engine, cfg, logger, metrics.NewSimpleMetricsCollector(logger))
+	p := NewProcessor(
+		newTestASRManager(t, "你好"),
+		nil,
+		engine,
+		promptCfg,
+		config.CorrectionConfig{Enabled: false},
+		logger,
+		metrics.NewSimpleMetricsCollector(logger),
+	)
+
+	audioData := testutil.LoadTestAudio(t, "test.wav")
+	resp, handled, err := p.ProcessDirect(context.Background(), ProcessRequest{
+		Audio:       audioData,
+		AudioFormat: "wav",
+		Task:        prompt.TaskTranscribe,
+	})
+	if err != nil {
+		t.Fatalf("ProcessDirect: %v", err)
+	}
+	if !handled {
+		t.Fatalf("handled=false want true")
+	}
+	if resp.Transcription != "你好" {
+		t.Fatalf("Transcription=%q want 你好", resp.Transcription)
+	}
+}
+
+func TestProcessor_BuildLLMRequest_Translate_DefaultTargets(t *testing.T) {
+	t.Parallel()
+
+	logger := testutil.NewTestLogger()
+	promptCfg := newTestPromptConfig()
+	engine, err := prompt.NewEngine(promptCfg, logger)
+	if err != nil {
+		t.Fatalf("prompt.NewEngine: %v", err)
+	}
+
+	p := NewProcessor(
+		newTestASRManager(t, "你好"),
+		nil,
+		engine,
+		promptCfg,
+		config.CorrectionConfig{Enabled: false},
+		logger,
+		metrics.NewSimpleMetricsCollector(logger),
+	)
+
+	audioData := testutil.LoadTestAudio(t, "test.wav")
+	llmReq, err := p.BuildLLMRequest(context.Background(), ProcessRequest{
+		Audio:       audioData,
+		AudioFormat: "wav",
+		Task:        prompt.TaskTranslate,
+		// empty target languages -> defaults
+	})
+	if err != nil {
+		t.Fatalf("BuildLLMRequest: %v", err)
+	}
+	if llmReq.SystemPrompt == "" || llmReq.UserPrompt == "" {
+		t.Fatalf("expected non-empty prompts")
+	}
+	if !strings.Contains(llmReq.UserPrompt, "你好") {
+		t.Fatalf("expected user prompt to include ASR text, got: %q", llmReq.UserPrompt)
+	}
+	if llmReq.Context["asr_text"] != "你好" {
+		t.Fatalf("context.asr_text=%v want 你好", llmReq.Context["asr_text"])
+	}
+}
+
+func TestProcessor_ProcessDirect_Translate_Separated(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		calls++
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+
+		isCorrection := bytes.Contains(body, []byte("纠正")) || bytes.Contains(body, []byte("纠错"))
+		content := ""
+		if isCorrection {
+			content = "```json\n{\"corrected_text\":\"你好！\"}\n```"
+		} else {
+			content = "```json\n{\"translations\":{\"en\":\"hello\"}}\n```"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": content}},
+			},
+			"usage": map[string]any{
+				"prompt_tokens": 1,
+				"total_tokens":  2,
+			},
+		})
+	}))
+	t.Cleanup(llmSrv.Close)
+
+	logger := testutil.NewTestLogger()
+	promptCfg := newTestPromptConfig()
+	engine, err := prompt.NewEngine(promptCfg, logger)
+	if err != nil {
+		t.Fatalf("prompt.NewEngine: %v", err)
+	}
+
+	llmManager, err := llm.NewManager(config.BackendsConfig{
+		LoadBalancer: config.LoadBalancerConfig{Strategy: "round_robin"},
+		Providers: []config.BackendProvider{
+			{Name: "test", Type: "openai", URL: llmSrv.URL, Model: "test-model"},
+		},
+	}, logger)
+	if err != nil {
+		t.Fatalf("llm.NewManager: %v", err)
+	}
+
+	p := NewProcessor(
+		newTestASRManager(t, "你好"),
+		llmManager,
+		engine,
+		promptCfg,
+		config.CorrectionConfig{Enabled: true, MergeWithTranslation: false},
+		logger,
+		metrics.NewSimpleMetricsCollector(logger),
+	)
+
+	audioData := testutil.LoadTestAudio(t, "test.wav")
+	resp, handled, err := p.ProcessDirect(context.Background(), ProcessRequest{
+		Audio:           audioData,
+		AudioFormat:     "wav",
+		Task:            prompt.TaskTranslate,
+		TargetLanguages: []string{"en"},
+	})
+	if err != nil {
+		t.Fatalf("ProcessDirect: %v", err)
+	}
+	if !handled {
+		t.Fatalf("handled=false want true")
+	}
+	if resp.CorrectedText != "你好！" {
+		t.Fatalf("CorrectedText=%q want 你好！", resp.CorrectedText)
+	}
+	if resp.Translations["en"] != "hello" {
+		t.Fatalf("en=%q want hello", resp.Translations["en"])
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want 2", calls)
+	}
 }
 
 func TestProcessor_Validate(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProcessor(t)
-	audioData := testutil.LoadTestAudio(t, "test.wav")
+	logger := testutil.NewTestLogger()
+	promptCfg := newTestPromptConfig()
+	engine, err := prompt.NewEngine(promptCfg, logger)
+	if err != nil {
+		t.Fatalf("prompt.NewEngine: %v", err)
+	}
 
+	p := NewProcessor(
+		newTestASRManager(t, "你好"),
+		nil,
+		engine,
+		promptCfg,
+		config.CorrectionConfig{Enabled: false},
+		logger,
+		metrics.NewSimpleMetricsCollector(logger),
+	)
+
+	audioData := testutil.LoadTestAudio(t, "test.wav")
 	if err := p.Validate(ProcessRequest{
 		Audio:       audioData,
 		AudioFormat: "wav",
@@ -75,105 +287,43 @@ func TestProcessor_Validate(t *testing.T) {
 	}
 }
 
-func TestProcessor_Validate_EmptyAudio(t *testing.T) {
+func TestProcessor_BuildSuccessResponse_UsesContext(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProcessor(t)
-	if err := p.Validate(ProcessRequest{
-		Audio:       nil,
-		AudioFormat: "wav",
-		Task:        prompt.TaskTranscribe,
-	}); err == nil {
-		t.Fatalf("expected error")
-	}
-}
-
-func TestProcessor_Validate_TooLarge(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
-	tooLarge := make([]byte, 32*1024*1024+1)
-	if err := p.Validate(ProcessRequest{
-		Audio:       tooLarge,
-		AudioFormat: "wav",
-		Task:        prompt.TaskTranscribe,
-	}); err == nil {
-		t.Fatalf("expected error")
-	}
-}
-
-func TestProcessor_Validate_UnsupportedFormat(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
-	audioData := []byte("x")
-	if err := p.Validate(ProcessRequest{
-		Audio:       audioData,
-		AudioFormat: "aac",
-		Task:        prompt.TaskTranscribe,
-	}); err == nil {
-		t.Fatalf("expected error")
-	}
-}
-
-func TestProcessor_Validate_InvalidTask(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
-	audioData := []byte("x")
-	if err := p.Validate(ProcessRequest{
-		Audio:       audioData,
-		AudioFormat: "wav",
-		Task:        prompt.TaskType("bad"),
-	}); err == nil {
-		t.Fatalf("expected error")
-	}
-}
-
-func TestProcessor_BuildLLMRequest_DefaultTargets(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
-	audioData := testutil.LoadTestAudio(t, "test.wav")
-
-	llmReq, err := p.BuildLLMRequest(context.Background(), ProcessRequest{
-		Audio:       audioData,
-		AudioFormat: "wav",
-		Task:        prompt.TaskTranslate,
-		// empty target languages: should use defaults
-	})
+	logger := testutil.NewTestLogger()
+	promptCfg := newTestPromptConfig()
+	engine, err := prompt.NewEngine(promptCfg, logger)
 	if err != nil {
-		t.Fatalf("BuildLLMRequest: %v", err)
+		t.Fatalf("prompt.NewEngine: %v", err)
 	}
-	if llmReq.AudioFormat != "wav" {
-		t.Fatalf("audio_format=%q want wav", llmReq.AudioFormat)
-	}
-	if len(llmReq.Audio) != len(audioData) {
-		t.Fatalf("audio_size=%d want %d", len(llmReq.Audio), len(audioData))
-	}
-	if !strings.Contains(llmReq.SystemPrompt, "英文") || !strings.Contains(llmReq.SystemPrompt, "日文") {
-		t.Fatalf("expected system prompt to include default target languages, got: %q", llmReq.SystemPrompt)
-	}
-}
 
-func TestProcessor_BuildSuccessResponse(t *testing.T) {
-	t.Parallel()
-
-	p := newTestProcessor(t)
+	p := NewProcessor(
+		newTestASRManager(t, "你好"),
+		nil,
+		engine,
+		promptCfg,
+		config.CorrectionConfig{Enabled: true, MergeWithTranslation: true},
+		logger,
+		metrics.NewSimpleMetricsCollector(logger),
+	)
 
 	llmResp := &llm.LLMResponse{
 		Content:      "raw",
 		Model:        "m",
 		PromptTokens: 1,
 		TotalTokens:  2,
-		Metadata:     map[string]interface{}{"backend": "b"},
+		Metadata: map[string]interface{}{
+			"backend": "b",
+			"context": map[string]interface{}{
+				"asr_text":        "你好",
+				"asr_duration_ms": int64(time.Millisecond),
+			},
+		},
 	}
 	parsed := &prompt.ParsedResponse{
+		CorrectedText: "你好！",
 		Sections: map[string]string{
-			"原文":         "你好",
-			"en":         "hello",
-			"ja":         "こんにちは",
-			"unexpected": "x",
+			"en": "hello",
 		},
 		Metadata: map[string]interface{}{
 			"parser":        "json",
@@ -186,29 +336,115 @@ func TestProcessor_BuildSuccessResponse(t *testing.T) {
 		TargetLanguages: []string{"en"},
 		AudioFormat:     "wav",
 	})
-
-	if resp.Status != "success" {
-		t.Fatalf("status=%q want success", resp.Status)
-	}
 	if resp.Transcription != "你好" {
-		t.Fatalf("transcription=%q want 你好", resp.Transcription)
+		t.Fatalf("Transcription=%q want 你好", resp.Transcription)
+	}
+	if resp.CorrectedText != "你好！" {
+		t.Fatalf("CorrectedText=%q want 你好！", resp.CorrectedText)
 	}
 	if resp.Translations["en"] != "hello" {
 		t.Fatalf("en=%q want hello", resp.Translations["en"])
 	}
-	if _, ok := resp.Translations["ja"]; ok {
-		t.Fatalf("did not expect ja translation")
-	}
 }
 
-func TestProcessor_BuildSuccessResponse_ParseFailed(t *testing.T) {
+func TestProcessor_ProcessDirect_ToolUse_TranslateMerged_ToolCalling(t *testing.T) {
 	t.Parallel()
 
-	p := newTestProcessor(t)
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
 
-	llmResp := &llm.LLMResponse{Content: "raw", Model: "m", Metadata: map[string]interface{}{"backend": "b"}}
-	resp := p.BuildSuccessResponse(llmResp, nil, ProcessRequest{AudioFormat: "wav"})
-	if resp.Status != "partial_success" {
-		t.Fatalf("status=%q want partial_success", resp.Status)
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+
+		if !bytes.Contains(body, []byte(`"tools"`)) || !bytes.Contains(body, []byte(`"tool_choice"`)) {
+			t.Fatalf("expected tool calling fields, got: %s", string(body))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": nil,
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "submit_result",
+									"arguments": "{\"corrected_text\":\"你好！\",\"translations\":{\"en\":\"hello\"}}",
+								},
+							},
+						},
+					},
+				},
+			},
+			"usage": map[string]any{
+				"prompt_tokens": 1,
+				"total_tokens":  2,
+			},
+		})
+	}))
+	t.Cleanup(llmSrv.Close)
+
+	logger := testutil.NewTestLogger()
+	promptCfg := newTestPromptConfig()
+	engine, err := prompt.NewEngine(promptCfg, logger)
+	if err != nil {
+		t.Fatalf("prompt.NewEngine: %v", err)
+	}
+
+	llmManager, err := llm.NewManager(config.BackendsConfig{
+		LoadBalancer: config.LoadBalancerConfig{Strategy: "round_robin"},
+		Providers: []config.BackendProvider{
+			{Name: "test", Type: "openai", URL: llmSrv.URL, Model: "test-model"},
+		},
+	}, logger)
+	if err != nil {
+		t.Fatalf("llm.NewManager: %v", err)
+	}
+
+	p := NewProcessor(
+		newTestASRManager(t, "你好"),
+		llmManager,
+		engine,
+		promptCfg,
+		config.CorrectionConfig{Enabled: true, MergeWithTranslation: true},
+		logger,
+		metrics.NewSimpleMetricsCollector(logger),
+	).WithPipelineConfig(config.PipelineConfig{
+		ToolCalling: config.ToolCallingConfig{
+			Enabled:       true,
+			AllowThinking: false,
+		},
+	})
+
+	audioData := testutil.LoadTestAudio(t, "test.wav")
+	resp, handled, err := p.ProcessDirect(context.Background(), ProcessRequest{
+		Audio:           audioData,
+		AudioFormat:     "wav",
+		Task:            prompt.TaskTranslate,
+		TargetLanguages: []string{"en"},
+	})
+	if err != nil {
+		t.Fatalf("ProcessDirect: %v", err)
+	}
+	if !handled {
+		t.Fatalf("handled=false want true")
+	}
+	if resp.Transcription != "你好" {
+		t.Fatalf("Transcription=%q want 你好", resp.Transcription)
+	}
+	if resp.CorrectedText != "你好！" {
+		t.Fatalf("CorrectedText=%q want 你好！", resp.CorrectedText)
+	}
+	if resp.Translations["en"] != "hello" {
+		t.Fatalf("en=%q want hello", resp.Translations["en"])
+	}
+	if resp.Metadata["pipeline"] != "translate_merged" {
+		t.Fatalf("pipeline=%v want translate_merged", resp.Metadata["pipeline"])
 	}
 }

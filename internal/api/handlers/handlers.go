@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/asr"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
@@ -176,6 +177,7 @@ func statusFromErrorCode(code coreerrors.ErrorCode) int {
 type Handler struct {
 	config                 *config.Config
 	llmManager             *llm.Manager
+	asrManager             *asr.Manager
 	startTime              time.Time
 	version                string
 	audioProcessor         *audio.Processor
@@ -200,10 +202,12 @@ func NewHandler(
 	metrics metrics.MetricsCollector,
 	cfg *config.Config,
 	llmManager *llm.Manager,
+	asrManager *asr.Manager,
 ) *Handler {
 	return &Handler{
 		config:                 cfg,
 		llmManager:             llmManager,
+		asrManager:             asrManager,
 		startTime:              time.Now(),
 		version:                "1.0.0",
 		audioProcessor:         audioProcessor,
@@ -279,6 +283,39 @@ func (h *Handler) ReadinessCheck(c *gin.Context) {
 	components["config"] = cfgStatus
 
 	ready := cfgStatus.Status == "healthy"
+
+	asrHealthy := false
+	if h.asrManager == nil {
+		components["asr_backends"] = ComponentHealth{Status: "unhealthy", Message: "asr manager not configured"}
+		ready = false
+	} else {
+		names := h.asrManager.ListBackends()
+		if len(names) == 0 {
+			components["asr_backends"] = ComponentHealth{Status: "unhealthy", Message: "no asr backends configured"}
+			ready = false
+		} else {
+			for _, name := range names {
+				backend, ok := h.asrManager.GetBackend(name)
+				if !ok || backend == nil {
+					continue
+				}
+				checkCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+				start := time.Now()
+				err := backend.HealthCheck(checkCtx)
+				cancel()
+				if err == nil {
+					asrHealthy = true
+					components["asr_backends"] = ComponentHealth{Status: "healthy", Latency: time.Since(start).Milliseconds()}
+					break
+				}
+			}
+			if !asrHealthy {
+				components["asr_backends"] = ComponentHealth{Status: "unhealthy", Message: "no healthy asr backend available"}
+				ready = false
+			}
+		}
+	}
+
 	backendsHealthy := false
 
 	if h.llmManager == nil {
@@ -365,6 +402,42 @@ func (h *Handler) DeepHealthCheck(c *gin.Context) {
 		overall = "unhealthy"
 	} else if ffmpegComponent.Status == "degraded" && overall == "healthy" {
 		overall = "degraded"
+	}
+
+	if h.asrManager == nil {
+		components["asr_manager"] = ComponentHealth{Status: "unhealthy", Message: "asr manager not configured"}
+		overall = "unhealthy"
+	} else {
+		names := h.asrManager.ListBackends()
+		if len(names) == 0 {
+			components["asr_manager"] = ComponentHealth{Status: "unhealthy", Message: "no asr backends configured"}
+			overall = "unhealthy"
+		} else {
+			anyHealthy := false
+			for _, name := range names {
+				backend, ok := h.asrManager.GetBackend(name)
+				if !ok || backend == nil {
+					continue
+				}
+				checkCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+				start := time.Now()
+				err := backend.HealthCheck(checkCtx)
+				cancel()
+
+				component := ComponentHealth{Latency: time.Since(start).Milliseconds()}
+				if err == nil {
+					component.Status = "healthy"
+					anyHealthy = true
+				} else {
+					component.Status = "unhealthy"
+					component.Message = err.Error()
+				}
+				components["asr_backend:"+name] = component
+			}
+			if !anyHealthy {
+				overall = "unhealthy"
+			}
+		}
 	}
 
 	if h.llmManager == nil {
@@ -477,12 +550,13 @@ func (h *Handler) ProcessAudioJSON(c *gin.Context) {
 
 	decoder := func(c *gin.Context) (audio.ProcessRequest, error) {
 		var req struct {
-			Audio           string                 `json:"audio"` // base64编码的音频数据
-			AudioFormat     string                 `json:"audio_format"`
-			Task            prompt.TaskType        `json:"task"`
-			SourceLanguage  string                 `json:"source_language,omitempty"`
-			TargetLanguages []string               `json:"target_languages"` // 期望短代码
-			Options         map[string]interface{} `json:"options,omitempty"`
+			Audio           string                  `json:"audio"` // base64编码的音频数据
+			AudioFormat     string                  `json:"audio_format"`
+			Task            prompt.TaskType         `json:"task"`
+			SourceLanguage  string                  `json:"source_language,omitempty"`
+			TargetLanguages []string                `json:"target_languages"` // 期望短代码
+			UserDictionary  []config.DictionaryTerm `json:"user_dictionary,omitempty"`
+			Options         map[string]interface{}  `json:"options,omitempty"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			return audio.ProcessRequest{}, fmt.Errorf("invalid JSON: %w", err)
@@ -512,6 +586,7 @@ func (h *Handler) ProcessAudioJSON(c *gin.Context) {
 			Task:            req.Task,
 			SourceLanguage:  req.SourceLanguage,
 			TargetLanguages: req.TargetLanguages,
+			UserDictionary:  req.UserDictionary,
 			Options:         req.Options,
 		}
 		audioReq.SetCleanup(func() { audio.ReleaseAudioBuffer(buf) })

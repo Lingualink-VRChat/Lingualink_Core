@@ -15,6 +15,31 @@ auth:
       config:
         requests_per_minute: 10
 
+# ASR 后端配置（新增，兼容 OpenAI Whisper API）
+asr:
+  providers:
+    - name: default
+      type: whisper # whisper / sensevoice / custom
+      url: http://localhost:8000/v1
+      model: whisper-1
+      api_key: "sk-asr-xxx"
+      parameters:
+        response_format: json # 注意: verbose_json 可能不被所有 ASR 模型支持 (如 glm-asr)
+        temperature: 0.0
+        language: "" # 留空自动检测
+
+# 纠错配置（新增）
+correction:
+  enabled: true
+  merge_with_translation: true
+  global_dictionary: []
+
+# Pipeline 配置
+pipeline:
+  tool_calling:
+    enabled: true         # 是否启用 Tool Calling（否则用 JSON 块）
+    allow_thinking: false # 是否允许 LLM 在 tool call 前输出思考/解释文本
+
 # LLM后端配置
 backends:
   load_balancer:
@@ -22,9 +47,9 @@ backends:
   providers:
     - name: default
       type: vllm
-      url: http://192.168.8.6:8000/v1
-      model: qwenOmni7
-      api_key: "sk-VkxlIMJf6KLHpI8MN"
+      url: http://localhost:8000/v1
+      model: qwen
+      api_key: "sk-xxx"
       # LLM模型参数配置（可选）
       parameters:
         temperature: 0.2          # 控制输出的随机性，范围 0.0-2.0
@@ -34,15 +59,11 @@ backends:
 
 # 提示词配置
 prompt:
-  # 语言管理策略: 'merge' 或 'override'
-  # 'merge' (默认): 将此处的语言列表与 languages.default.yaml 中的列表合并
-  # 'override': 完全忽略默认语言列表，仅使用此文件中定义的语言
-  # 如果要禁用某些默认语言，或只使用一个很小的自定义列表，请使用 'override'
-  language_management_strategy: merge
   defaults:
     task: translate
     target_languages: ["en", "ja", "zh"]
   languages:
+    # 标准语言
     - code: zh
       names:
         display: "中文"
@@ -103,12 +124,58 @@ prompt:
         english: "Italian"
         native: "Italiano"
       aliases: ["italian", "意大利语", "意大利文"]
+    - code: pt
+      names:
+        display: "葡萄牙语"
+        english: "Portuguese"
+        native: "Português"
+      aliases: ["portuguese", "葡萄牙语", "葡萄牙文", "português"]
+    - code: ar
+      names:
+        display: "阿拉伯语"
+        english: "Arabic"
+        native: "العربية"
+      aliases: ["arabic", "阿拉伯语", "阿拉伯文", "العربية"]
+    - code: hi
+      names:
+        display: "印地语"
+        english: "Hindi"
+        native: "हिन्दी"
+      aliases: ["hindi", "印地语", "印地文", "हिन्दी"]
+    - code: th
+      names:
+        display: "泰语"
+        english: "Thai"
+        native: "ไทย"
+      aliases: ["thai", "泰语", "泰文", "ไทย"]
+    - code: vi
+      names:
+        display: "越南语"
+        english: "Vietnamese"
+        native: "Tiếng Việt"
+      aliases: ["vietnamese", "越南语", "越南文", "tiếng việt"]
+    - code: id
+      names:
+        display: "印尼语"
+        english: "Indonesian"
+        native: "Bahasa Indonesia"
+      aliases: ["indonesian", "印尼语", "印尼文", "bahasa indonesia"]
+    - code: ms
+      names:
+        display: "马来语"
+        english: "Malay"
+        native: "Bahasa Melayu"
+      aliases: ["malay", "马来语", "马来文", "bahasa melayu"]
+
+    # 趣味语言
     - code: neko
+      type: fun
       names:
         display: "猫娘语"
         english: "Neko-speak"
-        native: "猫娘语"
+        native: "猫娘语喵~"
       aliases: ["neko", "猫娘", "喵喵语", "萌妹语", "nya"]
+      style_note: '语气可爱活泼，句尾适当添加"喵~"，可使用颜文字(◕ᴗ◕✿)，保持原意不变。'
   parsing:
     separators: [":", "：", "-", "—"]
     strict_mode: false

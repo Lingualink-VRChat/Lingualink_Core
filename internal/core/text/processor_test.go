@@ -123,9 +123,6 @@ func TestProcessor_BuildLLMRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLLMRequest: %v", err)
 	}
-	if llmReq.Audio != nil {
-		t.Fatalf("expected no audio")
-	}
 	if llmReq.SystemPrompt == "" || llmReq.UserPrompt == "" {
 		t.Fatalf("expected non-empty prompts")
 	}
@@ -148,7 +145,6 @@ func TestProcessor_BuildSuccessResponse(t *testing.T) {
 	}
 	parsed := &prompt.ParsedResponse{
 		Sections: map[string]string{
-			"原文": "你好",
 			"en": "hello",
 			"ja": "こんにちは",
 		},

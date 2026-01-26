@@ -114,3 +114,4 @@ templates/local/
 # Monitoring and metrics data (but keep source code)
 metrics/data/
 monitoring/data/ 
+logs/

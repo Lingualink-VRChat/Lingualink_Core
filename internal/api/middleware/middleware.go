@@ -242,10 +242,17 @@ func extractCredentials(c *gin.Context) auth.Credentials {
 	}
 
 	// 从Authorization Header提取Token
-	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
+	if authHeader := c.GetHeader("Authorization"); authHeader != "" && credentials.APIKey == "" {
 		if strings.HasPrefix(authHeader, "Bearer ") {
-			credentials.Token = authHeader
-			credentials.Type = "jwt"
+			bearer := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+			if bearer != "" && looksLikeJWT(bearer) {
+				credentials.Token = "Bearer " + bearer
+				credentials.Type = "jwt"
+			} else if bearer != "" {
+				// Treat non-JWT bearer tokens as API keys (common client convention).
+				credentials.APIKey = bearer
+				credentials.Type = "api_key"
+			}
 		} else if strings.HasPrefix(authHeader, "ApiKey ") {
 			credentials.APIKey = strings.TrimPrefix(authHeader, "ApiKey ")
 			credentials.Type = "api_key"
@@ -253,6 +260,19 @@ func extractCredentials(c *gin.Context) auth.Credentials {
 	}
 
 	return credentials
+}
+
+func looksLikeJWT(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // generateRequestID 生成请求ID

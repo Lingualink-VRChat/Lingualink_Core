@@ -16,10 +16,13 @@ import (
 type LLMRequest struct {
 	SystemPrompt string                 `json:"system_prompt"`
 	UserPrompt   string                 `json:"user_prompt"`
-	Audio        []byte                 `json:"audio"`
-	AudioFormat  string                 `json:"audio_format"`
 	Model        string                 `json:"model,omitempty"`
 	Options      map[string]interface{} `json:"options,omitempty"`
+	Tools        []ToolDefinition       `json:"tools,omitempty"`
+	ToolChoice   *ToolChoice            `json:"tool_choice,omitempty"`
+	// Context carries internal metadata for multi-stage processors.
+	// It is not forwarded to the LLM backend.
+	Context map[string]interface{} `json:"-"`
 }
 
 // LLMResponse LLM响应
@@ -29,6 +32,7 @@ type LLMResponse struct {
 	PromptTokens int                    `json:"prompt_tokens"`
 	TotalTokens  int                    `json:"total_tokens"`
 	Duration     time.Duration          `json:"duration"`
+	ToolCalls    []ToolCall             `json:"tool_calls,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata"`
 }
 
@@ -178,6 +182,9 @@ func (m *Manager) Process(ctx context.Context, req *LLMRequest) (*LLMResponse, e
 		resp.Metadata = make(map[string]interface{})
 	}
 	resp.Metadata["backend"] = backend.GetName()
+	if req != nil && len(req.Context) > 0 {
+		resp.Metadata["context"] = req.Context
+	}
 	resp.Duration = duration
 
 	return resp, nil

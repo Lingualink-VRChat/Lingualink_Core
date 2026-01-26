@@ -186,8 +186,6 @@ parameters:
 
 ```yaml
 prompt:
-  language_management_strategy: merge    # merge 或 override
-  
   defaults:
     task: translate
     target_languages: ["en", "ja", "zh"]
@@ -199,24 +197,27 @@ prompt:
         english: "Chinese"
         native: "中文"
       aliases: ["chinese", "中文", "汉语", "zh-cn"]
+    - code: neko
+      type: fun
+      names:
+        display: "猫娘语"
+        english: "Neko-speak"
+        native: "猫娘语喵~"
+      aliases: ["neko", "猫娘", "nya"]
+      style_note: '语气可爱活泼，句尾适当添加"喵~"，可使用颜文字(◕ᴗ◕✿)，保持原意不变。'
 ```
-
-#### 语言管理策略
-
-| 策略 | 说明 |
-|-----|------|
-| `merge` | 与 `languages.default.yaml` 合并 |
-| `override` | 完全覆盖默认语言配置 |
 
 #### 语言配置字段
 
 | 字段 | 说明 |
 |-----|------|
 | `code` | 语言代码（ISO 639-1）|
+| `type` | 语言类型（`standard` 或 `fun`，默认 `standard`）|
 | `names.display` | 显示名称 |
 | `names.english` | 英文名称 |
 | `names.native` | 本地名称 |
 | `aliases` | 别名列表 |
+| `style_note` | 翻译风格说明（可选，会自动注入到 prompt）|
 
 ---
 

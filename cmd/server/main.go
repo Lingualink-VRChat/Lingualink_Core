@@ -13,6 +13,7 @@ import (
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/middleware"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/routes"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/asr"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/cache"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
@@ -46,14 +47,21 @@ func main() {
 		logrus.Fatalf("Failed to create LLM manager: %v", err)
 	}
 
+	asrManager, err := asr.NewManager(cfg.ASR, logger)
+	if err != nil {
+		logrus.Fatalf("Failed to create ASR manager: %v", err)
+	}
+
 	promptEngine, err := prompt.NewEngine(cfg.Prompt, logger)
 	if err != nil {
 		logrus.Fatalf("Failed to create prompt engine: %v", err)
 	}
 
-	audioProcessor := audio.NewProcessor(llmManager, promptEngine, cfg.Prompt, logger, metricsCollector)
+	audioProcessor := audio.NewProcessor(asrManager, llmManager, promptEngine, cfg.Prompt, cfg.Correction, logger, metricsCollector).
+		WithPipelineConfig(cfg.Pipeline)
 	translationCache := cache.NewInMemoryCache(1000)
-	textProcessor := text.NewProcessorWithCache(llmManager, promptEngine, metricsCollector, cfg.Prompt, logger, translationCache, 5*time.Minute)
+	textProcessor := text.NewProcessorWithCache(llmManager, promptEngine, metricsCollector, cfg.Prompt, logger, translationCache, 5*time.Minute).
+		WithCorrectionConfig(cfg.Correction)
 	audioProcessingService := processing.NewService[audio.ProcessRequest, *audio.ProcessResponse](llmManager, promptEngine, logger)
 	textProcessingService := processing.NewService[text.ProcessRequest, *text.ProcessResponse](llmManager, promptEngine, logger)
 	statusStore := processing.NewInMemoryStatusStore(30 * time.Minute)
@@ -76,7 +84,7 @@ func main() {
 	}
 
 	// 设置路由
-	router := setupRouter(cfg, llmManager, authenticator, audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, metricsCollector, logger)
+	router := setupRouter(cfg, llmManager, asrManager, authenticator, audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, metricsCollector, logger)
 
 	// 创建HTTP服务器
 	server := &http.Server{
@@ -111,7 +119,7 @@ func main() {
 }
 
 // setupRouter 设置路由
-func setupRouter(cfg *config.Config, llmManager *llm.Manager, authenticator *auth.MultiAuthenticator, audioProcessor *audio.Processor, textProcessor *text.Processor, audioProcessingService *processing.Service[audio.ProcessRequest, *audio.ProcessResponse], textProcessingService *processing.Service[text.ProcessRequest, *text.ProcessResponse], statusStore processing.StatusStore, metricsCollector metrics.MetricsCollector, logger *logrus.Logger) *gin.Engine {
+func setupRouter(cfg *config.Config, llmManager *llm.Manager, asrManager *asr.Manager, authenticator *auth.MultiAuthenticator, audioProcessor *audio.Processor, textProcessor *text.Processor, audioProcessingService *processing.Service[audio.ProcessRequest, *audio.ProcessResponse], textProcessingService *processing.Service[text.ProcessRequest, *text.ProcessResponse], statusStore processing.StatusStore, metricsCollector metrics.MetricsCollector, logger *logrus.Logger) *gin.Engine {
 	// 创建Gin引擎
 	router := gin.New()
 
@@ -123,7 +131,7 @@ func setupRouter(cfg *config.Config, llmManager *llm.Manager, authenticator *aut
 	router.Use(middleware.Recovery(logger))
 
 	// 创建处理器
-	handler := handlers.NewHandler(audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, authenticator, logger, metricsCollector, cfg, llmManager)
+	handler := handlers.NewHandler(audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, authenticator, logger, metricsCollector, cfg, llmManager, asrManager)
 
 	// 注册路由
 	routes.RegisterRoutes(router, handler, authenticator)

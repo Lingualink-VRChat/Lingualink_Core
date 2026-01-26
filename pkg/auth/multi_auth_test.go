@@ -72,6 +72,31 @@ func TestMultiAuthenticator_AutoDetectJWT(t *testing.T) {
 	}
 }
 
+func TestMultiAuthenticator_AutoDetectBearerAPIKey(t *testing.T) {
+	t.Parallel()
+
+	apiAuth := &recordingAuthenticator{typ: "api_key"}
+	jwtAuth := &recordingAuthenticator{typ: "jwt"}
+	anonAuth := &recordingAuthenticator{typ: "anonymous"}
+
+	ma := &MultiAuthenticator{
+		authenticators: map[string]Authenticator{
+			"api_key":   apiAuth,
+			"jwt":       jwtAuth,
+			"anonymous": anonAuth,
+		},
+		logger: testutil.NewTestLogger(),
+	}
+
+	_, err := ma.Authenticate(context.Background(), Credentials{Token: "Bearer test-key"})
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !apiAuth.called || jwtAuth.called || anonAuth.called {
+		t.Fatalf("unexpected calls: api=%v jwt=%v anon=%v", apiAuth.called, jwtAuth.called, anonAuth.called)
+	}
+}
+
 func TestMultiAuthenticator_AnonymousFallback(t *testing.T) {
 	t.Parallel()
 

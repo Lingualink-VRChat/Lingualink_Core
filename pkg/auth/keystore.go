@@ -48,8 +48,36 @@ func (store *APIKeyStore) LoadFromFile(filePath string) error {
 		return fmt.Errorf("failed to read key file %s: %w", filePath, err)
 	}
 
-	if err := json.Unmarshal(data, store); err != nil {
+	type rawFile struct {
+		Keys json.RawMessage `json:"keys"`
+	}
+	var raw rawFile
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("failed to parse key file %s: %w", filePath, err)
+	}
+	if len(raw.Keys) == 0 {
+		return fmt.Errorf("failed to parse key file %s: missing keys", filePath)
+	}
+
+	// Preferred format (template): {"keys": {"key": {...}}}
+	var keyMap map[string]APIKeyConfig
+	mapErr := json.Unmarshal(raw.Keys, &keyMap)
+	if mapErr != nil {
+		// Detect deprecated list format to provide a clear migration error.
+		var keyList []map[string]interface{}
+		if listErr := json.Unmarshal(raw.Keys, &keyList); listErr == nil {
+			return fmt.Errorf(
+				"api key file %s uses deprecated list format (\"keys\": [ ... ]); migrate to map format like config/api_keys.template.json",
+				filePath,
+			)
+		}
+		return fmt.Errorf("failed to parse key file %s: expected {\"keys\": {\"<api-key>\": {...}}}: %w", filePath, mapErr)
+	}
+
+	store.Keys = keyMap
+
+	if store.Keys == nil {
+		store.Keys = make(map[string]APIKeyConfig)
 	}
 
 	store.logger.Infof("Loaded %d API keys from %s", len(store.Keys), filePath)

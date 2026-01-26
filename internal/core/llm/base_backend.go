@@ -3,7 +3,6 @@ package llm
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
-	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -43,18 +41,6 @@ func NewBaseOpenAICompatibleBackend(name, baseURL, apiKey, model string, timeout
 
 // Process 处理请求 - 通用的OpenAI兼容实现
 func (b *BaseOpenAICompatibleBackend) Process(ctx context.Context, req *LLMRequest) (*LLMResponse, error) {
-	if len(req.Audio) > 0 {
-		fields := logrus.Fields{
-			logging.FieldAudioFormat: req.AudioFormat,
-			"audio_size":             len(req.Audio),
-			logging.FieldBackend:     b.name,
-		}
-		if requestID, ok := logging.RequestIDFromContext(ctx); ok {
-			fields[logging.FieldRequestID] = requestID
-		}
-		b.logger.WithFields(fields).Info("Sending audio request")
-	}
-
 	// 构建消息
 	messages := b.buildMessages(req)
 
@@ -62,6 +48,16 @@ func (b *BaseOpenAICompatibleBackend) Process(ctx context.Context, req *LLMReque
 	apiReq := map[string]interface{}{
 		"model":    b.model,
 		"messages": messages,
+	}
+
+	// Tool calling (optional)
+	if req != nil {
+		if len(req.Tools) > 0 {
+			apiReq["tools"] = req.Tools
+		}
+		if req.ToolChoice != nil {
+			apiReq["tool_choice"] = req.ToolChoice
+		}
 	}
 
 	// 添加默认参数
@@ -116,6 +112,7 @@ func (b *BaseOpenAICompatibleBackend) Process(ctx context.Context, req *LLMReque
 
 	// 提取内容和使用信息
 	content := b.extractContent(apiResp)
+	toolCalls := b.extractToolCalls(apiResp)
 	promptTokens, totalTokens := b.extractUsage(apiResp)
 
 	return &LLMResponse{
@@ -123,6 +120,7 @@ func (b *BaseOpenAICompatibleBackend) Process(ctx context.Context, req *LLMReque
 		Model:        b.model,
 		PromptTokens: promptTokens,
 		TotalTokens:  totalTokens,
+		ToolCalls:    toolCalls,
 		Metadata: map[string]interface{}{
 			"backend":      b.name,
 			"raw_response": apiResp,
@@ -143,43 +141,12 @@ func (b *BaseOpenAICompatibleBackend) buildMessages(req *LLMRequest) []map[strin
 	}
 
 	// 添加用户消息
-	if len(req.Audio) > 0 {
-		// 构建带音频的用户消息
-		messages = append(messages, b.buildAudioMessage(req))
-	} else {
-		// 纯文本消息
-		messages = append(messages, map[string]interface{}{
-			"role":    "user",
-			"content": req.UserPrompt,
-		})
-	}
+	messages = append(messages, map[string]interface{}{
+		"role":    "user",
+		"content": req.UserPrompt,
+	})
 
 	return messages
-}
-
-// buildAudioMessage 构建音频消息 - 可被子类重写
-func (b *BaseOpenAICompatibleBackend) buildAudioMessage(req *LLMRequest) map[string]interface{} {
-	// 默认使用OpenAI格式的多模态消息
-	audioBase64 := base64.StdEncoding.EncodeToString(req.Audio)
-
-	userContent := []interface{}{
-		map[string]interface{}{
-			"type": "text",
-			"text": req.UserPrompt,
-		},
-		map[string]interface{}{
-			"type": "input_audio",
-			"input_audio": map[string]interface{}{
-				"data":   audioBase64,
-				"format": req.AudioFormat,
-			},
-		},
-	}
-
-	return map[string]interface{}{
-		"role":    "user",
-		"content": userContent,
-	}
 }
 
 // addDefaultParameters 添加默认参数 - 可被子类重写
@@ -273,6 +240,64 @@ func (b *BaseOpenAICompatibleBackend) extractContent(apiResp map[string]interfac
 		}
 	}
 	return ""
+}
+
+func (b *BaseOpenAICompatibleBackend) extractToolCalls(apiResp map[string]interface{}) []ToolCall {
+	choices, ok := apiResp["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil
+	}
+
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	message, ok := choice["message"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	rawCalls, ok := message["tool_calls"].([]interface{})
+	if !ok || len(rawCalls) == 0 {
+		return nil
+	}
+
+	toolCalls := make([]ToolCall, 0, len(rawCalls))
+	for _, rawCall := range rawCalls {
+		callMap, ok := rawCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		var call ToolCall
+		if id, ok := callMap["id"].(string); ok {
+			call.ID = id
+		}
+		if typ, ok := callMap["type"].(string); ok {
+			call.Type = typ
+		}
+
+		if fnAny, ok := callMap["function"]; ok {
+			if fnMap, ok := fnAny.(map[string]interface{}); ok {
+				if name, ok := fnMap["name"].(string); ok {
+					call.Function.Name = name
+				}
+				switch args := fnMap["arguments"].(type) {
+				case string:
+					call.Function.Arguments = args
+				case map[string]interface{}:
+					// Some backends may return arguments as a JSON object.
+					if argsBytes, err := json.Marshal(args); err == nil {
+						call.Function.Arguments = string(argsBytes)
+					}
+				}
+			}
+		}
+
+		toolCalls = append(toolCalls, call)
+	}
+	return toolCalls
 }
 
 // extractUsage 提取使用信息

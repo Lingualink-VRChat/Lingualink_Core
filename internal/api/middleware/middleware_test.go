@@ -102,6 +102,26 @@ func TestAuth_ValidKey(t *testing.T) {
 	}
 }
 
+func TestAuth_ValidBearerKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := testutil.NewTestLogger()
+	authenticator := newTestAuthenticator(t, logger)
+
+	r := gin.New()
+	r.Use(Auth(authenticator))
+	r.GET("/x", func(c *gin.Context) { c.Status(200) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Authorization", "Bearer user-key")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAuth_InvalidKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

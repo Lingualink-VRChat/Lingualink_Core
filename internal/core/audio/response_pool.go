@@ -16,6 +16,7 @@ func acquireProcessResponse() *ProcessResponse {
 	resp.RequestID = ""
 	resp.Status = ""
 	resp.Transcription = ""
+	resp.CorrectedText = ""
 	resp.RawResponse = ""
 	resp.ProcessingTime = 0
 	for k := range resp.Translations {
@@ -36,6 +37,7 @@ func (r *ProcessResponse) Release() {
 	r.RequestID = ""
 	r.Status = ""
 	r.Transcription = ""
+	r.CorrectedText = ""
 	r.RawResponse = ""
 	r.ProcessingTime = 0
 	for k := range r.Translations {

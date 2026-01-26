@@ -129,6 +129,18 @@ func (ma *MultiAuthenticator) Authenticate(ctx context.Context, credentials Cred
 		// 自动检测认证类型
 		credentials.Type = ma.detectAuthType(credentials)
 	}
+	if credentials.Type == "api_key" && credentials.APIKey == "" && credentials.Token != "" {
+		token := strings.TrimSpace(credentials.Token)
+		if strings.HasPrefix(token, "ApiKey ") {
+			token = strings.TrimSpace(strings.TrimPrefix(token, "ApiKey "))
+		}
+		if strings.HasPrefix(token, "Bearer ") {
+			token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+		}
+		if token != "" {
+			credentials.APIKey = token
+		}
+	}
 
 	authenticator, ok := ma.authenticators[credentials.Type]
 	if !ok {
@@ -144,11 +156,48 @@ func (ma *MultiAuthenticator) detectAuthType(credentials Credentials) string {
 		return "api_key"
 	}
 	if credentials.Token != "" {
-		if strings.HasPrefix(credentials.Token, "Bearer ") || len(strings.Split(credentials.Token, ".")) == 3 {
+		token := strings.TrimSpace(credentials.Token)
+		if strings.HasPrefix(token, "Bearer ") {
+			token = strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+		}
+		if token == "" {
+			return "anonymous"
+		}
+
+		looksJWT := looksLikeJWT(token)
+		if looksJWT {
+			if _, ok := ma.authenticators["jwt"]; ok {
+				return "jwt"
+			}
+			// JWT looks likely, but if JWT strategy isn't enabled, fall back to api_key when possible.
+			if _, ok := ma.authenticators["api_key"]; ok {
+				return "api_key"
+			}
+			return "jwt"
+		}
+
+		// Bearer tokens that don't look like JWTs are treated as API keys by default.
+		if _, ok := ma.authenticators["api_key"]; ok {
+			return "api_key"
+		}
+		if _, ok := ma.authenticators["jwt"]; ok {
 			return "jwt"
 		}
 	}
 	return "anonymous"
+}
+
+func looksLikeJWT(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // APIKeyAuthenticator API密钥认证器

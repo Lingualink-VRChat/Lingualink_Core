@@ -67,36 +67,44 @@ func TestParseJSONResponse(t *testing.T) {
 	tests := []struct {
 		name         string
 		jsonData     string
-		wantOrig     string
+		wantTrans    string
+		wantSource   string
+		wantCorrect  string
 		wantSections map[string]string
 		wantErr      bool
 	}{
 		{
-			name:     "transcription_and_translations",
-			jsonData: `{"transcription":"你好","translations":{"en":"hello","ja":"こんにちは"}}`,
-			wantOrig: "你好",
+			name:      "transcription_and_translations",
+			jsonData:  `{"transcription":"你好","translations":{"en":"hello","ja":"こんにちは"}}`,
+			wantTrans: "你好",
 			wantSections: map[string]string{
-				"原文": "你好",
 				"en": "hello",
 				"ja": "こんにちは",
 			},
 		},
 		{
-			name:     "source_text_overwrites_transcription",
-			jsonData: `{"transcription":"A","source_text":"B","translations":{"en":"C"}}`,
-			wantOrig: "B",
+			name:       "source_text_overwrites_transcription",
+			jsonData:   `{"transcription":"A","source_text":"B","translations":{"en":"C"}}`,
+			wantTrans:  "A",
+			wantSource: "B",
 			wantSections: map[string]string{
-				"原文": "B",
 				"en": "C",
 			},
 		},
 		{
-			name:     "unicode_and_escaping",
-			jsonData: `{"source_text":"含有\n换行","translations":{"en":"He said: \"hi\""}}`,
-			wantOrig: "含有\n换行",
+			name:       "unicode_and_escaping",
+			jsonData:   `{"source_text":"含有\n换行","translations":{"en":"He said: \"hi\""}}`,
+			wantSource: "含有\n换行",
 			wantSections: map[string]string{
-				"原文": "含有\n换行",
 				"en": "He said: \"hi\"",
+			},
+		},
+		{
+			name:        "corrected_text",
+			jsonData:    `{"corrected_text":"你好！","translations":{"en":"hello"}}`,
+			wantCorrect: "你好！",
+			wantSections: map[string]string{
+				"en": "hello",
 			},
 		},
 		{
@@ -105,11 +113,10 @@ func TestParseJSONResponse(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name:     "nested_extra_fields_ignored",
-			jsonData: `{"source_text":"x","translations":{"en":"y"},"extra":{"a":1}}`,
-			wantOrig: "x",
+			name:       "nested_extra_fields_ignored",
+			jsonData:   `{"source_text":"x","translations":{"en":"y"},"extra":{"a":1}}`,
+			wantSource: "x",
 			wantSections: map[string]string{
-				"原文": "x",
 				"en": "y",
 			},
 		},
@@ -127,8 +134,14 @@ func TestParseJSONResponse(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseJSONResponse: %v", err)
 			}
-			if parsed.Sections["原文"] != tt.wantOrig {
-				t.Fatalf("orig=%q want %q", parsed.Sections["原文"], tt.wantOrig)
+			if parsed.Transcription != tt.wantTrans {
+				t.Fatalf("Transcription=%q want %q", parsed.Transcription, tt.wantTrans)
+			}
+			if parsed.SourceText != tt.wantSource {
+				t.Fatalf("SourceText=%q want %q", parsed.SourceText, tt.wantSource)
+			}
+			if parsed.CorrectedText != tt.wantCorrect {
+				t.Fatalf("CorrectedText=%q want %q", parsed.CorrectedText, tt.wantCorrect)
 			}
 			for k, want := range tt.wantSections {
 				if got := parsed.Sections[k]; got != want {

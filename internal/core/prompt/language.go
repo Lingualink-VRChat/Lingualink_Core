@@ -11,9 +11,17 @@ import (
 
 // Language 语言定义
 type Language struct {
-	Code    string            `yaml:"code"`
-	Names   map[string]string `yaml:"names"`
-	Aliases []string          `yaml:"aliases"`
+	Code      string            `yaml:"code"`
+	Type      string            `yaml:"type"` // standard | fun (default: standard)
+	Names     map[string]string `yaml:"names"`
+	Aliases   []string          `yaml:"aliases"`
+	StyleNote string            `yaml:"style_note"` // Optional (usually for fun languages)
+}
+
+type LanguageStyleNote struct {
+	Code        string
+	DisplayName string
+	Note        string
 }
 
 // LanguageManager 语言管理器
@@ -35,10 +43,17 @@ func NewLanguageManager(cfg config.PromptConfig, logger *logrus.Logger) *Languag
 
 	// 加载语言配置
 	for _, lang := range cfg.Languages {
+		langType := strings.ToLower(strings.TrimSpace(lang.Type))
+		if langType == "" {
+			langType = "standard"
+		}
+
 		langDef := &Language{
-			Code:    lang.Code,
-			Names:   lang.Names,
-			Aliases: lang.Aliases,
+			Code:      lang.Code,
+			Type:      langType,
+			Names:     lang.Names,
+			Aliases:   lang.Aliases,
+			StyleNote: strings.TrimSpace(lang.StyleNote),
 		}
 		manager.languages[lang.Code] = langDef
 
@@ -62,6 +77,36 @@ func NewLanguageManager(cfg config.PromptConfig, logger *logrus.Logger) *Languag
 	}
 
 	return manager
+}
+
+func (lm *LanguageManager) BuildStyleNotes(targetLanguageCodes []string) []LanguageStyleNote {
+	notes := make([]LanguageStyleNote, 0)
+
+	for _, langCode := range targetLanguageCodes {
+		normalizedCode := strings.ToLower(strings.TrimSpace(langCode))
+		lang, ok := lm.codeIndex[normalizedCode]
+		if !ok {
+			continue
+		}
+
+		styleNote := strings.TrimSpace(lang.StyleNote)
+		if styleNote == "" {
+			continue
+		}
+
+		displayName := lang.Names["display"]
+		if displayName == "" {
+			displayName = lang.Code
+		}
+
+		notes = append(notes, LanguageStyleNote{
+			Code:        lang.Code,
+			DisplayName: displayName,
+			Note:        styleNote,
+		})
+	}
+
+	return notes
 }
 
 // GetLanguages 获取所有支持的语言

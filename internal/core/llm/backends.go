@@ -56,9 +56,9 @@ func (b *OpenAIBackend) HealthCheck(ctx context.Context) error {
 // GetCapabilities 获取能力
 func (b *OpenAIBackend) GetCapabilities() Capabilities {
 	return Capabilities{
-		SupportsAudio:      true,
-		SupportedFormats:   []string{"wav", "mp3", "m4a", "opus"},
-		MaxAudioSize:       25 * 1024 * 1024, // 25MB
+		SupportsAudio:      false,
+		SupportedFormats:   []string{},
+		MaxAudioSize:       0,
 		SupportsStreaming:  true,
 		SupportedLanguages: []string{"en", "zh", "ja", "ko", "es", "fr", "de", "it", "pt", "ru"},
 	}
@@ -108,9 +108,9 @@ func (b *VLLMBackend) HealthCheck(ctx context.Context) error {
 // GetCapabilities 获取能力
 func (b *VLLMBackend) GetCapabilities() Capabilities {
 	return Capabilities{
-		SupportsAudio:      true, // 支持音频处理
-		SupportedFormats:   []string{"wav", "mp3", "opus", "m4a"},
-		MaxAudioSize:       25 * 1024 * 1024, // 25MB
+		SupportsAudio:      false,
+		SupportedFormats:   []string{},
+		MaxAudioSize:       0,
 		SupportsStreaming:  true,
 		SupportedLanguages: []string{"en", "zh", "ja", "ko", "es", "fr", "de"},
 	}

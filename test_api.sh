@@ -2,7 +2,7 @@
 
 # Lingualink Core API 测试脚本
 API_KEY="lingualink-demo-key"
-BASE_URL="http://localhost:8100/api/v1"
+BASE_URL="http://localhost:8080/api/v1"
 AUDIO_FILE="test/test.opus"
 
 echo "=== Lingualink Core API 测试 ==="

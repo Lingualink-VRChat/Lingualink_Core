@@ -40,6 +40,37 @@ func TestAPIKeyStore_LoadFromFile_Success(t *testing.T) {
 	}
 }
 
+func TestAPIKeyStore_LoadFromFile_ListFormat_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	logger := testutil.NewTestLogger()
+	store := NewAPIKeyStore(logger)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keys.json")
+
+	data := `{
+  "keys": [
+    {
+      "key": "test-key",
+      "name": "test",
+      "enabled": true
+    }
+  ]
+}`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	err := store.LoadFromFile(path)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "deprecated list format") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAPIKeyStore_LoadFromFile_NotFoundCreatesDefault(t *testing.T) {
 	t.Parallel()
 

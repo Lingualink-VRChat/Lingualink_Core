@@ -3,7 +3,6 @@ package prompt
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
 	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
@@ -72,9 +71,13 @@ type OutputSection struct {
 
 // ParsedResponse 解析后的响应
 type ParsedResponse struct {
-	RawText  string                 `json:"raw_text"`
-	Sections map[string]string      `json:"sections"` // 键为短代码或特殊键（如"原文"）
-	Metadata map[string]interface{} `json:"metadata"`
+	RawText  string            `json:"raw_text"`
+	Sections map[string]string `json:"sections"` // translations keyed by language code
+	// Optional fields for multi-stage pipelines.
+	Transcription string                 `json:"transcription,omitempty"`
+	SourceText    string                 `json:"source_text,omitempty"`
+	CorrectedText string                 `json:"corrected_text,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata"`
 }
 
 // 移除 PromptTemplate 和 Language 定义，已移动到单独的文件
@@ -103,61 +106,50 @@ func NewEngine(cfg config.PromptConfig, logger *logrus.Logger) (*Engine, error) 
 	return engine, nil
 }
 
-// 移除 loadDefaultTemplate 方法，模板管理已移动到 TemplateManager
-
-// Build 构建音频处理提示词
-func (e *Engine) Build(ctx context.Context, req PromptRequest) (*Prompt, error) {
-	// 根据任务类型选择模板
-	var templateName string
-	var targetLanguageNames []string
-	var err error
-
-	if req.Task == TaskTranscribe {
-		// 转录任务不需要目标语言
-		templateName = "audio_transcribe"
-	} else if req.Task == TaskTranslate {
-		// 翻译任务需要目标语言
-		templateName = "audio_translate"
-		if len(req.TargetLanguages) > 0 {
-			targetLanguageNames, err = e.languageManager.ConvertCodesToDisplayNames(req.TargetLanguages)
-			if err != nil {
-				var appErr *coreerrors.AppError
-				if errors.As(err, &appErr) {
-					return nil, appErr
-				}
-				return nil, coreerrors.NewValidationError("convert target language codes failed", err)
-			}
-		}
-	} else {
-		return nil, coreerrors.NewValidationError(fmt.Sprintf("unsupported task type: %s", req.Task), nil)
-	}
-
-	// 准备模板数据
+// BuildTextCorrectPrompt builds a correction-only prompt for ASR text.
+func (e *Engine) BuildTextCorrectPrompt(ctx context.Context, sourceText string, dictionary []config.DictionaryTerm) (*Prompt, error) {
 	data := map[string]interface{}{
-		"Task":                req.Task,
-		"SourceLanguage":      req.SourceLanguage,
-		"TargetLanguageCodes": req.TargetLanguages, // 保留原始短代码
-		"TargetLanguageNames": targetLanguageNames, // 用于模板的中文显示名称
-		"Variables":           req.Variables,
+		"SourceText":  sourceText,
+		"Dictionary":  dictionary,
+		"Variables":   map[string]interface{}{},
+		"TargetCodes": []string{},
 	}
 
-	// 使用对应的模板
-	prompt, _, err := e.templateManager.BuildPrompt(ctx, templateName, data)
+	p, _, err := e.templateManager.BuildPrompt(ctx, "text_correct", data)
 	if err != nil {
-		return nil, coreerrors.NewInternalError("build audio prompt failed", err)
+		return nil, coreerrors.NewInternalError("build text correct prompt failed", err)
+	}
+	return p, nil
+}
+
+// BuildTextCorrectTranslatePrompt builds a merged correction+translation prompt for ASR text.
+func (e *Engine) BuildTextCorrectTranslatePrompt(ctx context.Context, sourceText string, targetLangCodes []string, dictionary []config.DictionaryTerm) (*Prompt, error) {
+	targetLanguageNames, err := e.languageManager.ConvertCodesToDisplayNames(targetLangCodes)
+	if err != nil {
+		var appErr *coreerrors.AppError
+		if errors.As(err, &appErr) {
+			return nil, appErr
+		}
+		return nil, coreerrors.NewValidationError("convert target language codes failed", err)
 	}
 
-	// 动态生成OutputRules，音频处理总是包含源文本
-	// transcribe任务不需要翻译段落，translate任务需要
-	includeTranslations := req.Task == TaskTranslate
-	var targetCodes []string
-	if includeTranslations {
-		targetCodes = req.TargetLanguages
-	}
-	dynamicOutputRules := e.languageManager.BuildDynamicOutputRules(req.Task, targetCodes, true)
+	targetLanguageStyleNotes := e.languageManager.BuildStyleNotes(targetLangCodes)
 
-	prompt.OutputRules = dynamicOutputRules
-	return prompt, nil
+	data := map[string]interface{}{
+		"TargetLanguageCodes":      targetLangCodes,
+		"TargetLanguageNames":      targetLanguageNames,
+		"TargetLanguageStyleNotes": targetLanguageStyleNotes,
+		"SourceText":               sourceText,
+		"Dictionary":               dictionary,
+	}
+
+	p, _, err := e.templateManager.BuildPrompt(ctx, "text_correct_translate", data)
+	if err != nil {
+		return nil, coreerrors.NewInternalError("build text correct+translate prompt failed", err)
+	}
+
+	p.OutputRules = e.languageManager.BuildDynamicOutputRules(TaskTranslate, targetLangCodes, false)
+	return p, nil
 }
 
 // BuildTextPrompt 构建文本翻译提示词
@@ -172,14 +164,17 @@ func (e *Engine) BuildTextPrompt(ctx context.Context, req PromptRequest) (*Promp
 		return nil, coreerrors.NewValidationError("convert target language codes failed", err)
 	}
 
+	targetLanguageStyleNotes := e.languageManager.BuildStyleNotes(req.TargetLanguages)
+
 	// 准备模板数据
 	data := map[string]interface{}{
-		"Task":                req.Task,
-		"SourceLanguage":      req.SourceLanguage,
-		"TargetLanguageCodes": req.TargetLanguages, // 保留原始短代码
-		"TargetLanguageNames": targetLanguageNames, // 用于模板的中文显示名称
-		"Variables":           req.Variables,
-		"SourceText":          req.Variables["source_text"], // 源文本
+		"Task":                     req.Task,
+		"SourceLanguage":           req.SourceLanguage,
+		"TargetLanguageCodes":      req.TargetLanguages,      // 保留原始短代码
+		"TargetLanguageNames":      targetLanguageNames,      // 用于模板的中文显示名称
+		"TargetLanguageStyleNotes": targetLanguageStyleNotes, // 用于模板的风格说明
+		"Variables":                req.Variables,
+		"SourceText":               req.Variables["source_text"], // 源文本
 	}
 
 	// 使用文本翻译模板

@@ -13,6 +13,7 @@ import (
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/middleware"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/api/routes"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/config"
+	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/asr"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/audio"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/cache"
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/llm"
@@ -44,7 +45,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	logger := testutil.NewTestLogger()
 	metricsCollector := metrics.NewSimpleMetricsCollector(logger)
 
-	llmContent := "```json\n{\"transcription\":\"你好\",\"translations\":{\"en\":\"hello\"}}\n```"
+	llmContent := "```json\n{\"translations\":{\"en\":\"hello\"}}\n```"
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/models":
@@ -67,6 +68,24 @@ func NewTestServer(t *testing.T) *TestServer {
 	}))
 	t.Cleanup(llmServer.Close)
 
+	asrServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": []map[string]interface{}{}})
+		case "/v1/audio/transcriptions":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"language": "zh",
+				"duration": 1.0,
+				"text":     "你好",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(asrServer.Close)
+
 	backendCfg := config.BackendsConfig{
 		LoadBalancer: config.LoadBalancerConfig{Strategy: "round_robin"},
 		Providers: []config.BackendProvider{
@@ -76,6 +95,15 @@ func NewTestServer(t *testing.T) *TestServer {
 	llmManager, err := llm.NewManager(backendCfg, logger)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
+	}
+
+	asrManager, err := asr.NewManager(config.ASRConfig{
+		Providers: []config.ASRProvider{
+			{Name: "asr", Type: "whisper", URL: asrServer.URL + "/v1", Model: "whisper-1"},
+		},
+	}, logger)
+	if err != nil {
+		t.Fatalf("asr.NewManager: %v", err)
 	}
 
 	promptCfg := config.PromptConfig{
@@ -108,11 +136,13 @@ func NewTestServer(t *testing.T) *TestServer {
 	}
 
 	cfg := &config.Config{
-		Server:   config.ServerConfig{Mode: "test", Port: 8080, Host: "127.0.0.1"},
-		Auth:     config.AuthConfig{Strategies: []config.AuthStrategy{{Type: "api_key", Enabled: true}}},
-		Backends: backendCfg,
-		Prompt:   promptCfg,
-		Logging:  config.LoggingConfig{Level: "debug", Format: "json"},
+		Server:     config.ServerConfig{Mode: "test", Port: 8080, Host: "127.0.0.1"},
+		Auth:       config.AuthConfig{Strategies: []config.AuthStrategy{{Type: "api_key", Enabled: true}}},
+		ASR:        config.ASRConfig{Providers: []config.ASRProvider{{Name: "asr", Type: "whisper", URL: asrServer.URL + "/v1", Model: "whisper-1"}}},
+		Correction: config.CorrectionConfig{Enabled: false, MergeWithTranslation: true},
+		Backends:   backendCfg,
+		Prompt:     promptCfg,
+		Logging:    config.LoggingConfig{Level: "debug", Format: "json"},
 	}
 
 	keysPath := filepath.Join(t.TempDir(), "api_keys.json")
@@ -120,14 +150,16 @@ func NewTestServer(t *testing.T) *TestServer {
 
 	authenticator := auth.NewMultiAuthenticator(cfg.Auth, logger)
 
-	audioProcessor := audio.NewProcessor(llmManager, promptEngine, promptCfg, logger, metricsCollector)
+	audioProcessor := audio.NewProcessor(asrManager, llmManager, promptEngine, promptCfg, cfg.Correction, logger, metricsCollector).
+		WithPipelineConfig(cfg.Pipeline)
 	translationCache := cache.NewInMemoryCache(1000)
-	textProcessor := text.NewProcessorWithCache(llmManager, promptEngine, metricsCollector, promptCfg, logger, translationCache, 5*time.Minute)
+	textProcessor := text.NewProcessorWithCache(llmManager, promptEngine, metricsCollector, promptCfg, logger, translationCache, 5*time.Minute).
+		WithCorrectionConfig(cfg.Correction)
 	audioProcessingService := processing.NewService[audio.ProcessRequest, *audio.ProcessResponse](llmManager, promptEngine, logger)
 	textProcessingService := processing.NewService[text.ProcessRequest, *text.ProcessResponse](llmManager, promptEngine, logger)
 	statusStore := processing.NewInMemoryStatusStore(5 * time.Minute)
 
-	handler := handlers.NewHandler(audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, authenticator, logger, metricsCollector, cfg, llmManager)
+	handler := handlers.NewHandler(audioProcessor, textProcessor, audioProcessingService, textProcessingService, statusStore, authenticator, logger, metricsCollector, cfg, llmManager, asrManager)
 
 	router := gin.New()
 	router.Use(middleware.RequestID())

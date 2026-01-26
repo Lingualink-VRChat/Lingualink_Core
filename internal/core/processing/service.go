@@ -39,6 +39,10 @@ type responseCacheHandler[T ProcessableRequest, R any] interface {
 	StoreCachedResponse(ctx context.Context, req T, resp R) error
 }
 
+type directProcessor[T ProcessableRequest, R any] interface {
+	ProcessDirect(ctx context.Context, req T) (R, bool, error)
+}
+
 // Service 通用处理服务
 type Service[T ProcessableRequest, R any] struct {
 	llmManager   *llm.Manager
@@ -90,6 +94,28 @@ func (s *Service[T, R]) Process(ctx context.Context, req T, handler LogicHandler
 			s.logger.WithFields(fields).Debug("Processing completed (cache hit)")
 
 			return cached, nil
+		}
+	}
+
+	// 1.8 由处理器直接处理（可选：用于多阶段/无LLM流程）
+	if dp, ok := any(handler).(directProcessor[T, R]); ok {
+		resp, handled, err := dp.ProcessDirect(ctx, req)
+		if err != nil {
+			return emptyResponse, ensureAppError(err, coreerrors.ErrCodeInternal, "direct processing failed")
+		}
+		if handled {
+			processingTimeSec := time.Since(startTime).Seconds()
+			if setter, ok := any(resp).(processingTimeSetter); ok {
+				setter.SetProcessingTime(processingTimeSec)
+			}
+
+			if cacher, ok := any(handler).(responseCacheHandler[T, R]); ok {
+				if err := cacher.StoreCachedResponse(ctx, req, resp); err != nil {
+					s.logger.WithError(err).Debug("Failed to store cached response")
+				}
+			}
+
+			return resp, nil
 		}
 	}
 
