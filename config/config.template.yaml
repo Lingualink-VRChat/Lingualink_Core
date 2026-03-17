@@ -10,6 +10,13 @@ auth:
     - type: api_key
       enabled: true
       config: {}
+    - type: webhook
+      enabled: true
+      endpoint: http://localhost:9080/api/v1/internal/verify-token
+      config:
+        timeout_ms: 3000
+        headers:
+          X-Internal-Key: "replace-with-authserver-internal-api-key"
     - type: anonymous
       enabled: false
       config:

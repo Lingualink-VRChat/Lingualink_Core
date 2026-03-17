@@ -74,6 +74,16 @@ func (ma *MultiAuthenticator) Authenticate(ctx context.Context, credentials Cred
 
 	authenticator, ok := ma.authenticators[credentials.Type]
 	if !ok {
+		// If the detected type is "jwt" but no JWT authenticator is registered,
+		// fall back to webhook authenticator (which can validate JWTs externally).
+		if credentials.Type == "jwt" {
+			if webhookAuth, wok := ma.authenticators["webhook"]; wok {
+				authenticator = webhookAuth
+				ok = true
+			}
+		}
+	}
+	if !ok {
 		return nil, fmt.Errorf("unsupported auth type: %s", credentials.Type)
 	}
 
