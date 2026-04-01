@@ -62,9 +62,9 @@ func TestWhisperBackend_HealthCheckAndTranscribe(t *testing.T) {
 
 			resp := map[string]any{
 				"task":     "transcribe",
-				"language": "zh",
+				"language": "",
 				"duration": 1.23,
-				"text":     "hello world",
+				"text":     "language Chinese<asr_text>hello world",
 				"segments": []map[string]any{
 					{"id": 0, "start": 0.0, "end": 1.23, "text": "hello world"},
 				},
@@ -106,7 +106,10 @@ func TestWhisperBackend_HealthCheckAndTranscribe(t *testing.T) {
 	if got.Text != "hello world" {
 		t.Fatalf("Text = %q", got.Text)
 	}
-	if got.DetectedLanguage != "zh" {
+	if got.RawText != "language Chinese<asr_text>hello world" {
+		t.Fatalf("RawText = %q", got.RawText)
+	}
+	if got.DetectedLanguage != "Chinese" {
 		t.Fatalf("DetectedLanguage = %q", got.DetectedLanguage)
 	}
 	if got.Duration <= 0 {
