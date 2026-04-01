@@ -4,6 +4,7 @@ package audio
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/internal/core/correction"
 	coreerrors "github.com/Lingualink-VRChat/Lingualink_Core/internal/core/errors"
@@ -137,6 +138,15 @@ func (p *Processor) buildPipelineResponse(
 	}
 	resp.Metadata["step_durations_ms"] = stepDurations
 
+	if p.logger != nil {
+		p.logger.WithFields(logrus.Fields{
+			"pipeline":              selected.Name,
+			"response_request_id":   resp.RequestID,
+			"asr_language":          asrLanguage,
+			"transcription_preview": previewResponseText(transcription),
+		}).Debug("Pipeline transcription prepared")
+	}
+
 	switch selected.Name {
 	case pipeline.PipelineTranscribe:
 		// ASR only.
@@ -209,4 +219,12 @@ func (p *Processor) buildPipelineResponse(
 	}
 
 	return resp, asrLanguage, nil
+}
+
+func previewResponseText(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= 240 {
+		return s
+	}
+	return s[:240] + "...(truncated)"
 }

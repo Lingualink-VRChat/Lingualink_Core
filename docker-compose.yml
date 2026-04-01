@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8100:8080"
+      - "8200:8080"
     environment:
       - LINGUALINK_CONFIG_FILE=config/config.yaml
       - LINGUALINK_KEYS_FILE=config/api_keys.json
@@ -12,6 +12,8 @@ services:
       - ./config:/app/config:ro
       - ./logs:/app/logs
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 30s

@@ -30,6 +30,14 @@ type WhisperBackend struct {
 	logger     *logrus.Logger
 }
 
+func previewLogText(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= 240 {
+		return s
+	}
+	return s[:240] + "...(truncated)"
+}
+
 func NewWhisperBackend(cfg config.ASRProvider, logger *logrus.Logger) *WhisperBackend {
 	baseURL := strings.TrimRight(cfg.URL, "/")
 	return &WhisperBackend{
@@ -173,6 +181,19 @@ func (w *WhisperBackend) Transcribe(ctx context.Context, req *ASRRequest) (*ASRR
 		Segments []Segment `json:"segments"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err == nil && parsed.Text != "" {
+		if w.logger != nil {
+			fields := logrus.Fields{
+				logging.FieldBackend: "qwen-asr",
+				"asr_language":       parsed.Language,
+				"asr_duration":       parsed.Duration,
+				"asr_text_preview":   previewLogText(parsed.Text),
+				"asr_raw_preview":    previewLogText(string(respBody)),
+			}
+			if requestID, ok := logging.RequestIDFromContext(ctx); ok {
+				fields[logging.FieldRequestID] = requestID
+			}
+			w.logger.WithFields(fields).Debug("ASR response parsed")
+		}
 		return &ASRResponse{
 			Text:             parsed.Text,
 			DetectedLanguage: parsed.Language,
@@ -183,5 +204,16 @@ func (w *WhisperBackend) Transcribe(ctx context.Context, req *ASRRequest) (*ASRR
 
 	// fallback for response_format=text
 	text := strings.TrimSpace(string(respBody))
+	if w.logger != nil {
+		fields := logrus.Fields{
+			logging.FieldBackend: "qwen-asr",
+			"asr_fallback_text":  previewLogText(text),
+			"asr_raw_preview":    previewLogText(string(respBody)),
+		}
+		if requestID, ok := logging.RequestIDFromContext(ctx); ok {
+			fields[logging.FieldRequestID] = requestID
+		}
+		w.logger.WithFields(fields).Warn("ASR response fell back to raw text")
+	}
 	return &ASRResponse{Text: text}, nil
 }
