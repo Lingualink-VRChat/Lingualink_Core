@@ -117,6 +117,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
+	middleware.ResetRateLimitStore()
 
 	logger := testutil.NewTestLogger()
 	metricsCollector := metrics.NewSimpleMetricsCollector(logger)
@@ -416,6 +417,47 @@ func TestProcessAudioJSON_NoAuth(t *testing.T) {
 	resp := doRequest(t, router, req)
 	if resp.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", resp.Code)
+	}
+}
+
+func TestQuotaStatus_ReturnsCurrentRateLimitSnapshot(t *testing.T) {
+	router := newTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/quota", nil)
+	req.Header.Set("X-API-Key", "user-key")
+
+	resp := doRequest(t, router, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200 body=%s", resp.Code, resp.Body.String())
+	}
+
+	var body struct {
+		FreeQuota          bool   `json:"free_quota"`
+		SubscriptionActive bool   `json:"subscription_active"`
+		Limit              int    `json:"limit"`
+		Used               int    `json:"used"`
+		Remaining          int    `json:"remaining"`
+		ResetAt            string `json:"reset_at"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.FreeQuota {
+		t.Fatal("expected api key identity not to be free quota")
+	}
+	if body.SubscriptionActive {
+		t.Fatal("expected api key identity not to have active subscription")
+	}
+	if body.Limit != 60 {
+		t.Fatalf("limit=%d want 60", body.Limit)
+	}
+	if body.Used != 0 {
+		t.Fatalf("used=%d want 0", body.Used)
+	}
+	if body.Remaining != 60 {
+		t.Fatalf("remaining=%d want 60", body.Remaining)
+	}
+	if strings.TrimSpace(body.ResetAt) == "" {
+		t.Fatal("expected reset_at")
 	}
 }
 

@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lingualink-VRChat/Lingualink_Core/pkg/auth"
@@ -10,6 +12,39 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
+
+const (
+	errCodeRateLimitExceeded       = "rate_limit_exceeded"
+	errCodeFreeTrialQuotaExhausted = "free_trial_quota_exhausted"
+)
+
+type rateLimitState struct {
+	windowStartedAt time.Time
+	count           int
+}
+
+type RateLimitSnapshot struct {
+	FreeQuota          bool          `json:"free_quota"`
+	SubscriptionActive bool          `json:"subscription_active"`
+	Limit              int           `json:"limit"`
+	Used               int           `json:"used"`
+	Remaining          int           `json:"remaining"`
+	WindowSize         time.Duration `json:"window_size"`
+	ResetAt            time.Time     `json:"reset_at"`
+}
+
+var inMemoryRateLimitStore = struct {
+	mu      sync.Mutex
+	buckets map[string]*rateLimitState
+}{
+	buckets: make(map[string]*rateLimitState),
+}
+
+func ResetRateLimitStore() {
+	inMemoryRateLimitStore.mu.Lock()
+	defer inMemoryRateLimitStore.mu.Unlock()
+	inMemoryRateLimitStore.buckets = make(map[string]*rateLimitState)
+}
 
 // CORS 跨域中间件
 func CORS() gin.HandlerFunc {
@@ -172,6 +207,11 @@ func Auth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 			fields[logging.FieldRequestID] = requestID
 		}
 		logrus.WithFields(fields).Debug("Authentication successful")
+
+		if !shouldSkipRateLimit(c.Request.URL.Path) && !allowRequestByRateLimit(identity, time.Now(), c) {
+			return
+		}
+
 		c.Next()
 	})
 }
@@ -204,8 +244,6 @@ func OptionalAuth(authenticator *auth.MultiAuthenticator) gin.HandlerFunc {
 // RateLimit 限流中间件（简单实现）
 func RateLimit() gin.HandlerFunc {
 	return gin.HandlerFunc(func(c *gin.Context) {
-		// TODO: 实现真正的限流逻辑
-		// 这里只是一个占位符
 		c.Next()
 	})
 }
@@ -260,6 +298,135 @@ func extractCredentials(c *gin.Context) auth.Credentials {
 	}
 
 	return credentials
+}
+
+func allowRequestByRateLimit(identity *auth.Identity, now time.Time, c *gin.Context) bool {
+	if identity == nil || identity.RateLimits == nil {
+		return true
+	}
+
+	windowSize := identity.RateLimits.WindowSize
+	limit := identity.RateLimits.RequestsPerMinute
+	if windowSize <= 0 || limit <= 0 {
+		return true
+	}
+
+	key := buildRateLimitKey(identity)
+
+	inMemoryRateLimitStore.mu.Lock()
+	defer inMemoryRateLimitStore.mu.Unlock()
+
+	state := inMemoryRateLimitStore.buckets[key]
+	if state == nil || now.Sub(state.windowStartedAt) >= windowSize {
+		inMemoryRateLimitStore.buckets[key] = &rateLimitState{
+			windowStartedAt: now,
+			count:           1,
+		}
+		return true
+	}
+
+	if state.count >= limit {
+		retryAfter := windowSize - now.Sub(state.windowStartedAt)
+		if retryAfter < 0 {
+			retryAfter = 0
+		}
+
+		errorCode := errCodeRateLimitExceeded
+		errorMessage := "request rate limit exceeded, please retry later"
+		if isFreeQuotaIdentity(identity) {
+			errorCode = errCodeFreeTrialQuotaExhausted
+			errorMessage = "free trial quota exhausted, please subscribe to continue"
+		}
+
+		if retryAfter > 0 {
+			c.Header("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+		}
+		c.JSON(429, gin.H{
+			"error":   errorCode,
+			"message": errorMessage,
+		})
+		c.Abort()
+		return false
+	}
+
+	state.count++
+	return true
+}
+
+func buildRateLimitKey(identity *auth.Identity) string {
+	if identity == nil {
+		return "anonymous"
+	}
+
+	windowSize := time.Minute
+	requestsPerMinute := 0
+	if identity.RateLimits != nil {
+		windowSize = identity.RateLimits.WindowSize
+		requestsPerMinute = identity.RateLimits.RequestsPerMinute
+	}
+
+	return fmt.Sprintf("%s|%s|%d|%s", identity.Type, identity.ID, requestsPerMinute, windowSize.String())
+}
+
+func isFreeQuotaIdentity(identity *auth.Identity) bool {
+	if identity == nil || identity.Metadata == nil {
+		return false
+	}
+
+	flag, ok := identity.Metadata["free_quota"].(bool)
+	return ok && flag
+}
+
+func shouldSkipRateLimit(path string) bool {
+	return path == "/api/v1/quota"
+}
+
+func GetRateLimitSnapshot(identity *auth.Identity, now time.Time) RateLimitSnapshot {
+	snapshot := RateLimitSnapshot{
+		FreeQuota:          isFreeQuotaIdentity(identity),
+		SubscriptionActive: hasActiveSubscription(identity),
+	}
+
+	if identity == nil || identity.RateLimits == nil {
+		return snapshot
+	}
+
+	limit := identity.RateLimits.RequestsPerMinute
+	windowSize := identity.RateLimits.WindowSize
+	snapshot.Limit = limit
+	snapshot.WindowSize = windowSize
+	if limit <= 0 || windowSize <= 0 {
+		return snapshot
+	}
+
+	key := buildRateLimitKey(identity)
+
+	inMemoryRateLimitStore.mu.Lock()
+	defer inMemoryRateLimitStore.mu.Unlock()
+
+	state := inMemoryRateLimitStore.buckets[key]
+	if state == nil || now.Sub(state.windowStartedAt) >= windowSize {
+		snapshot.Remaining = limit
+		snapshot.ResetAt = now.Add(windowSize)
+		return snapshot
+	}
+
+	snapshot.Used = state.count
+	snapshot.Remaining = limit - state.count
+	if snapshot.Remaining < 0 {
+		snapshot.Remaining = 0
+	}
+	snapshot.ResetAt = state.windowStartedAt.Add(windowSize)
+	return snapshot
+}
+
+func hasActiveSubscription(identity *auth.Identity) bool {
+	if identity == nil || identity.Metadata == nil {
+		return false
+	}
+
+	status, ok := identity.Metadata["subscription_status"].(string)
+	return ok && strings.EqualFold(strings.TrimSpace(status), "active")
 }
 
 func looksLikeJWT(token string) bool {

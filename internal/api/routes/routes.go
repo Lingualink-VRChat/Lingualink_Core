@@ -27,6 +27,8 @@ func RegisterRoutes(router *gin.Engine, handler *handlers.Handler, authenticator
 	protected := router.Group("/api/v1")
 	protected.Use(middleware.Auth(authenticator))
 	{
+		protected.GET("/quota", handler.GetQuotaStatus)
+
 		// 音频处理 - 重命名为 process_audio
 		protected.POST("/process_audio", handler.ProcessAudioJSON)
 

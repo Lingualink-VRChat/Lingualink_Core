@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,10 @@ import (
 )
 
 func newTestAuthenticator(t *testing.T, logger *logrus.Logger) *auth.MultiAuthenticator {
+	return newTestAuthenticatorWithRPM(t, logger, 60)
+}
+
+func newTestAuthenticatorWithRPM(t *testing.T, logger *logrus.Logger, rpm int) *auth.MultiAuthenticator {
 	t.Helper()
 
 	keysPath := filepath.Join(t.TempDir(), "api_keys.json")
@@ -26,12 +31,12 @@ func newTestAuthenticator(t *testing.T, logger *logrus.Logger) *auth.MultiAuthen
   "keys": {
     "user-key": {
       "id": "user-1",
-      "requests_per_minute": 60,
+      "requests_per_minute": %d,
       "enabled": true
     }
   }
 }`
-	if err := os.WriteFile(keysPath, []byte(keys), 0600); err != nil {
+	if err := os.WriteFile(keysPath, []byte(fmt.Sprintf(keys, rpm)), 0600); err != nil {
 		t.Fatalf("write keys: %v", err)
 	}
 	t.Setenv("LINGUALINK_KEYS_FILE", keysPath)
@@ -41,6 +46,10 @@ func newTestAuthenticator(t *testing.T, logger *logrus.Logger) *auth.MultiAuthen
 			{Type: "api_key", Enabled: true},
 		},
 	}, logger)
+}
+
+func resetRateLimitStore() {
+	ResetRateLimitStore()
 }
 
 func TestRequestID_Generated(t *testing.T) {
@@ -158,6 +167,84 @@ func TestAuth_NoKey(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d want 401", rr.Code)
+	}
+}
+
+func TestAuth_RateLimitExceeded(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	resetRateLimitStore()
+
+	logger := testutil.NewTestLogger()
+	authenticator := newTestAuthenticatorWithRPM(t, logger, 1)
+
+	r := gin.New()
+	r.Use(Auth(authenticator))
+	r.GET("/x", func(c *gin.Context) { c.Status(200) })
+
+	req1 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req1.Header.Set("X-API-Key", "user-key")
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first status=%d want 200", rr1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req2.Header.Set("X-API-Key", "user-key")
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status=%d want 429 body=%s", rr2.Code, rr2.Body.String())
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rr2.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if body["error"] != errCodeRateLimitExceeded {
+		t.Fatalf("error=%q want %q", body["error"], errCodeRateLimitExceeded)
+	}
+}
+
+func TestAllowRequestByRateLimit_FreeQuotaReturnsSpecificError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	resetRateLimitStore()
+
+	identity := &auth.Identity{
+		ID:   "user-free",
+		Type: auth.IdentityTypeUser,
+		Metadata: map[string]interface{}{
+			"free_quota": true,
+		},
+		RateLimits: &auth.RateLimitConfig{
+			RequestsPerMinute: 1,
+			BurstSize:         1,
+			WindowSize:        time.Hour,
+		},
+	}
+
+	c1, _ := gin.CreateTestContext(httptest.NewRecorder())
+	if !allowRequestByRateLimit(identity, time.Now(), c1) {
+		t.Fatal("expected first request to pass")
+	}
+
+	recorder := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(recorder)
+	if allowRequestByRateLimit(identity, time.Now(), c2) {
+		t.Fatal("expected second request to be limited")
+	}
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d want 429", recorder.Code)
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if body["error"] != errCodeFreeTrialQuotaExhausted {
+		t.Fatalf("error=%q want %q", body["error"], errCodeFreeTrialQuotaExhausted)
 	}
 }
 
